@@ -19,7 +19,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 # ───────────────────────────────────────────────
 # Helper: Log conversation turn (student + mentor)
 # ───────────────────────────────────────────────
@@ -27,7 +26,7 @@ def log_conversation(student_id: str, phase_type: str, phase_json: dict,
                      student_msg: str, mentor_msg: str):
     """
     Inserts a conversation turn into student_conversation table.
-    Each row represents one turn (user + mentor).
+    Each row represents one new phase (system start or next).
     """
     try:
         data = {
@@ -42,6 +41,48 @@ def log_conversation(student_id: str, phase_type: str, phase_json: dict,
             print("❌ Error inserting into student_conversation:", res.error)
     except Exception as e:
         print("⚠️ Exception during log_conversation:", e)
+
+
+# ───────────────────────────────────────────────
+# Helper: Append ChatGPT reply directly (no RPC)
+# ───────────────────────────────────────────────
+def append_mentor_message(student_id: str, mentor_reply: str):
+    """
+    Appends ChatGPT's reply to the most recent conversation_log
+    for this student. Updates DB only — doesn't return the full log.
+    """
+    try:
+        # 1️⃣ Get latest conversation row
+        res = supabase.table("student_conversation")\
+            .select("conversation_id, conversation_log")\
+            .eq("student_id", student_id)\
+            .order("updated_at", desc=True)\
+            .limit(1)\
+            .execute()
+
+        if not res.data:
+            print(f"⚠️ No active conversation found for student {student_id}")
+            return
+
+        convo = res.data[0]
+        convo_id = convo["conversation_id"]
+        convo_log = convo["conversation_log"] or []
+
+        # 2️⃣ Append mentor reply
+        convo_log.append({
+            "role": "assistant",
+            "content": mentor_reply,
+            "ts": datetime.utcnow().isoformat() + "Z"
+        })
+
+        # 3️⃣ Update that row in Supabase
+        supabase.table("student_conversation")\
+            .update({"conversation_log": convo_log})\
+            .eq("conversation_id", convo_id)\
+            .execute()
+
+    except Exception as e:
+        print("⚠️ Exception in append_mentor_message:", e)
 
 
 # ───────────────────────────────────────────────
@@ -125,10 +166,10 @@ async def orchestrate(request: Request):
         # 4️⃣ Send context to GPT
         mentor_reply = chat_with_gpt(prompt, phase_json)
 
-        # 5️⃣ Log mentor response (for visibility / analytics)
-        log_conversation(student_id, "contextual_chat", phase_json, message, mentor_reply)
+        # 5️⃣ Append mentor reply directly in DB (Python-side)
+        append_mentor_message(student_id, mentor_reply)
 
-        # 6️⃣ Return mentor response to frontend
+        # 6️⃣ Return only the mentor's message for rendering
         return {
             "mentor_reply": mentor_reply,
             "phase_json": phase_json,
@@ -173,7 +214,5 @@ async def orchestrate(request: Request):
 # ───────────────────────────────────────────────
 @app.get("/")
 def home():
-    """
-    Simple root route to verify API health.
-    """
+    """Simple root route to verify API health."""
     return {"message": "🧠 Paragraph Orchestra API is running successfully!"}
