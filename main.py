@@ -1,4 +1,3 @@
-# main.py
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
@@ -112,7 +111,25 @@ async def orchestrate(request: Request):
         phase_type = rpc_data.get("phase_type")
         phase_json = rpc_data.get("phase_json")
 
-        prompt = "You are the mentor. Explain this paragraph conversationally to the student."
+        prompt = """
+You are a 30-year experienced NEET-PG teacher.
+
+You will be given JSON that includes "phase_type" (like "concept" or "mcq") and "phase_json" with content.  
+Create one short, empathetic, motivating paragraph (3–5 sentences) as if you’re talking to your student before showing that phase.  
+Return your response strictly as JSON in this format:
+
+{
+  "type": "mentor_reflection",
+  "text": "your motivational paragraph here"
+}
+
+Meaning of "mentor_reflection": a short, warm, human teacher introduction that prepares the student emotionally and intellectually for the next concept or MCQ.
+
+If phase_type = "concept": calmly introduce why this concept matters and encourage understanding, not memorization.  
+If phase_type = "mcq": energize the student, challenge them to apply reasoning, and reassure them even if they answer wrong.  
+
+Respond only with that JSON.
+"""
         mentor_reply = chat_with_gpt(prompt, phase_json)
 
         log_conversation(student_id, phase_type, phase_json, "SYSTEM: start", mentor_reply)
@@ -127,7 +144,6 @@ async def orchestrate(request: Request):
     # 🟡 2️⃣ CHAT — CONTEXTUAL (concept or MCQ)
     # ───────────────────────────────
     elif action == "chat":
-        # 1️⃣ Append the student's message in the DB & get latest conversation
         rpc_data = call_rpc("append_student_message", {
             "p_student_id": student_id,
             "p_message": message
@@ -139,37 +155,45 @@ async def orchestrate(request: Request):
         phase_json = rpc_data.get("phase_json")
         conversation_log = rpc_data.get("conversation_log")
 
-        # 2️⃣ Find the most recent mentor reply for context
-        previous_mentor_reply = None
-        if conversation_log and isinstance(conversation_log, list):
-            for item in reversed(conversation_log):
-                if isinstance(item, dict):
-                    # works with both new structure ('role':'assistant') and old ('mentor')
-                    if item.get("role") == "assistant" or "mentor" in item:
-                        previous_mentor_reply = item.get("content") or item.get("mentor")
-                        break
+        # 🧠 Use the full contextual prompt
+        prompt = """
+You are a 30-year-experienced NEET-PG faculty mentor.
 
-        # 3️⃣ Build the contextual prompt
-        if previous_mentor_reply:
-            prompt = (
-                "You are the student's mentor continuing an ongoing learning conversation.\n"
-                f"Previous mentor reply:\n{previous_mentor_reply}\n\n"
-                f"Student just asked:\n{message}\n\n"
-                "Please respond naturally, referring to the concept or MCQ context below:\n"
-            )
-        else:
-            prompt = (
-                "Continue explaining based on the student's question below:\n"
-                f"{message}\n\nHere is the context:\n"
-            )
+The input is a conversation log between a mentor and a student.
+All messages before the last one are context from previous exchanges.
+The last message is the student’s current question that you must now answer.
 
-        # 4️⃣ Send context to GPT
-        mentor_reply = chat_with_gpt(prompt, phase_json)
+Answer naturally like a NEET-PG teacher — accurate, concise, empathetic, and exam-focused.
 
-        # 5️⃣ Append mentor reply directly in DB (Python-side)
+Choose one suitable delivery style from this list (only one):
+text_explanation, summary_paragraph, step_by_step, example_block, storytelling, quote, dialogue_snippet, code_explanation,
+hyf_list, pros_cons_list, key_points, checklist, timeline_list, mnemonic_list,
+mcq_block, true_false, flashcard_set, reflection_prompt, confidence_poll,
+image_explanation, media_suggestion, chart_data,
+tabular_summary, ranking_list,
+cognitive_load_meter, mastery_feedback, error_analysis, learning_gap_report,
+conversation_reply, action_prompt, system_message, chapter_completion, mentor_reflection,
+case_scenario, branching_decision, role_play,
+poetic_explanation, motivational_quote, metaphorical_teaching, daily_tip,
+concept_intro, exam_strategy, clinical_correlation, quick_revision, pitfall_warning,
+ai_generated_hint, doubt_clarification, reinforcement_card, summary_box, teaching_point,
+table_comparison, fact_grid, quote_highlight, mentor_reflection_emotive,
+gap_fix_pair, mistake_correction, clinical_case_flow, study_tip, encouragement_burst,
+concept_bridge, exam_alert, mentor_story, creative_summary.
+
+Return your answer strictly in this JSON format:
+
+{
+  "type": "<one_of_the_styles_above>",
+  "text": "your mentor reply here"
+}
+
+Do not include explanations, prefaces, or any extra text — only valid JSON.
+"""
+        mentor_reply = chat_with_gpt(prompt, conversation_log)
+
         append_mentor_message(student_id, mentor_reply)
 
-        # 6️⃣ Return only the mentor's message for rendering
         return {
             "mentor_reply": mentor_reply,
             "phase_json": phase_json,
@@ -187,12 +211,25 @@ async def orchestrate(request: Request):
         phase_type = rpc_data.get("phase_type")
         phase_json = rpc_data.get("phase_json")
 
-        # Choose prompt dynamically
-        if phase_type == "concept":
-            prompt = "Introduce and explain this next paragraph to the student."
-        else:
-            prompt = "Present this question interactively and motivate the student to answer."
+        prompt = """
+You are a 30-year experienced NEET-PG teacher.
 
+You will be given JSON that includes "phase_type" (like "concept" or "mcq") and "phase_json" with content.  
+Create one short, empathetic, motivating paragraph (3–5 sentences) as if you’re talking to your student before showing that phase.  
+Return your response strictly as JSON in this format:
+
+{
+  "type": "mentor_reflection",
+  "text": "your motivational paragraph here"
+}
+
+Meaning of "mentor_reflection": a short, warm, human teacher introduction that prepares the student emotionally and intellectually for the next concept or MCQ.
+
+If phase_type = "concept": calmly introduce why this concept matters and encourage understanding, not memorization.  
+If phase_type = "mcq": energize the student, challenge them to apply reasoning, and reassure them even if they answer wrong.  
+
+Respond only with that JSON.
+"""
         mentor_reply = chat_with_gpt(prompt, phase_json)
         log_conversation(student_id, phase_type, phase_json, "SYSTEM: next", mentor_reply)
 
@@ -202,16 +239,10 @@ async def orchestrate(request: Request):
             "mentor_reply": mentor_reply
         }
 
-    # ───────────────────────────────
-    # ❌ Unknown Action
-    # ───────────────────────────────
     else:
         return {"error": f"Unknown action '{action}'"}
 
 
-# ───────────────────────────────────────────────
-# Health check route
-# ───────────────────────────────────────────────
 @app.get("/")
 def home():
     """Simple root route to verify API health."""
