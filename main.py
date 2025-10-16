@@ -8,12 +8,12 @@ from gpt_utils import chat_with_gpt
 # ───────────────────────────────────────────────
 # Initialize FastAPI app
 # ───────────────────────────────────────────────
-app = FastAPI(title="Paragraph Orchestra API", version="1.0.0")
+app = FastAPI(title="Paragraph Orchestra API", version="2.0.0")
 
-# ✅ Allow your frontend (Expo/Web/React) to call this API from any origin
+# ✅ Allow frontend (Expo / Web / React) to call this API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # You can replace "*" with your frontend domain later for security
+    allow_origins=["*"],  # replace "*" with your frontend domain later for security
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -21,11 +21,13 @@ app.add_middleware(
 
 
 # ───────────────────────────────────────────────
-# Helper: Log conversation turns in Supabase
+# Helper: Log conversation turn (student + mentor)
 # ───────────────────────────────────────────────
-def log_conversation(student_id: str, phase_type: str, phase_json: dict, student_msg: str, mentor_msg: str):
+def log_conversation(student_id: str, phase_type: str, phase_json: dict,
+                     student_msg: str, mentor_msg: str):
     """
-    Stores one conversation turn (student + mentor messages) into student_conversation.
+    Inserts a conversation turn into student_conversation table.
+    Each row represents one turn (user + mentor).
     """
     try:
         data = {
@@ -33,7 +35,7 @@ def log_conversation(student_id: str, phase_type: str, phase_json: dict, student
             "phase_type": phase_type,
             "phase_json": phase_json,
             "conversation_log": [{"student": student_msg, "mentor": mentor_msg}],
-            "updated_at": datetime.utcnow().isoformat()
+            "updated_at": datetime.utcnow().isoformat() + "Z"
         }
         res = supabase.table("student_conversation").insert(data).execute()
         if res.error:
@@ -70,8 +72,8 @@ async def orchestrate(request: Request):
         phase_json = rpc_data.get("phase_json")
 
         prompt = "You are the mentor. Explain this paragraph conversationally to the student."
-
         mentor_reply = chat_with_gpt(prompt, phase_json)
+
         log_conversation(student_id, phase_type, phase_json, "SYSTEM: start", mentor_reply)
 
         return {
@@ -81,34 +83,60 @@ async def orchestrate(request: Request):
         }
 
     # ───────────────────────────────
-    # 🟡 2️⃣ CHAT
+    # 🟡 2️⃣ CHAT — CONTEXTUAL (concept or MCQ)
     # ───────────────────────────────
     elif action == "chat":
-        rows = supabase.table("student_conversation") \
-            .select("phase_type, phase_json") \
-            .eq("student_id", student_id) \
-            .order("updated_at", desc=True) \
-            .limit(1) \
-            .execute()
+        # 1️⃣ Append the student's message in the DB & get latest conversation
+        rpc_data = call_rpc("append_student_message", {
+            "p_student_id": student_id,
+            "p_message": message
+        })
 
-        if not rows.data:
-            return {"error": "⚠️ No active phase found for this student"}
+        if not rpc_data:
+            return {"error": "❌ append_student_message RPC failed"}
 
-        phase_type = rows.data[0]["phase_type"]
-        phase_json = rows.data[0]["phase_json"]
+        phase_json = rpc_data.get("phase_json")
+        conversation_log = rpc_data.get("conversation_log")
 
-        if phase_type == "concept":
-            prompt = "Continue explaining and clarify the student's question about this concept."
+        # 2️⃣ Find the most recent mentor reply for context
+        previous_mentor_reply = None
+        if conversation_log and isinstance(conversation_log, list):
+            for item in reversed(conversation_log):
+                if isinstance(item, dict):
+                    # works with both new structure ('role':'assistant') and old ('mentor')
+                    if item.get("role") == "assistant" or "mentor" in item:
+                        previous_mentor_reply = item.get("content") or item.get("mentor")
+                        break
+
+        # 3️⃣ Build the contextual prompt
+        if previous_mentor_reply:
+            prompt = (
+                "You are the student's mentor continuing an ongoing learning conversation.\n"
+                f"Previous mentor reply:\n{previous_mentor_reply}\n\n"
+                f"Student just asked:\n{message}\n\n"
+                "Please respond naturally, referring to the concept or MCQ context below:\n"
+            )
         else:
-            prompt = "Clarify the reasoning or concept behind this MCQ question."
+            prompt = (
+                "Continue explaining based on the student's question below:\n"
+                f"{message}\n\nHere is the context:\n"
+            )
 
-        mentor_reply = chat_with_gpt(prompt, phase_json, message)
-        log_conversation(student_id, phase_type, phase_json, message, mentor_reply)
+        # 4️⃣ Send context to GPT
+        mentor_reply = chat_with_gpt(prompt, phase_json)
 
-        return {"mentor_reply": mentor_reply}
+        # 5️⃣ Log mentor response (for visibility / analytics)
+        log_conversation(student_id, "contextual_chat", phase_json, message, mentor_reply)
+
+        # 6️⃣ Return mentor response to frontend
+        return {
+            "mentor_reply": mentor_reply,
+            "phase_json": phase_json,
+            "context_used": True
+        }
 
     # ───────────────────────────────
-    # 🔵 3️⃣ NEXT
+    # 🔵 3️⃣ NEXT — advance to next phase
     # ───────────────────────────────
     elif action == "next":
         rpc_data = call_rpc("next_orchestra", {"p_student_id": student_id})
@@ -118,6 +146,7 @@ async def orchestrate(request: Request):
         phase_type = rpc_data.get("phase_type")
         phase_json = rpc_data.get("phase_json")
 
+        # Choose prompt dynamically
         if phase_type == "concept":
             prompt = "Introduce and explain this next paragraph to the student."
         else:
@@ -133,7 +162,7 @@ async def orchestrate(request: Request):
         }
 
     # ───────────────────────────────
-    # ❌ Fallback
+    # ❌ Unknown Action
     # ───────────────────────────────
     else:
         return {"error": f"Unknown action '{action}'"}
