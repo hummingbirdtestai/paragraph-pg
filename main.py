@@ -127,50 +127,40 @@ async def orchestrate(request: Request):
         if not rpc_data:
             return {"error": "❌ append_student_message RPC failed"}
 
-        phase_json = rpc_data.get("phase_json")
+        # 🟢 Only conversation_log is needed for GPT
         conversation_log = rpc_data.get("conversation_log")
 
-        # 🧠 still use GPT for live mentor interaction
+        # 🧠 still use GPT for live mentor interaction — phase_json REMOVED
         prompt = """
-You are a 30-year-experienced NEET-PG faculty mentor.
+You are a senior NEET-PG mentor with 30 yrs experience.
 
-The input is a conversation log between a mentor and a student.
-All messages before the last one are context from previous exchanges.
-The last message is the student’s current question that you must now answer.
+Input = array of chat objects [{mentor?, student?}].  
+Use earlier objects only as context; answer only the **last student's question**.
 
-Answer naturally like a NEET-PG teacher — accurate, concise, empathetic, and exam-focused.
+Reply in ONE of 5 mentor styles:
+1️⃣ crisp_summary → short bullet notes
+2️⃣ differential_table → comparison table
+3️⃣ high_yield_fact → emoji fact sheet
+4️⃣ algorithm_flow → stepwise arrows (→)
+5️⃣ mentor_reflection → closing summary
 
-Choose one suitable delivery style from this list (only one):
-text_explanation, summary_paragraph, step_by_step, example_block, storytelling, quote, dialogue_snippet, code_explanation,
-hyf_list, pros_cons_list, key_points, checklist, timeline_list, mnemonic_list,
-mcq_block, true_false, flashcard_set, reflection_prompt, confidence_poll,
-image_explanation, media_suggestion, chart_data,
-tabular_summary, ranking_list,
-cognitive_load_meter, mastery_feedback, error_analysis, learning_gap_report,
-conversation_reply, action_prompt, system_message, chapter_completion, mentor_reflection,
-case_scenario, branching_decision, role_play,
-poetic_explanation, motivational_quote, metaphorical_teaching, daily_tip,
-concept_intro, exam_strategy, clinical_correlation, quick_revision, pitfall_warning,
-ai_generated_hint, doubt_clarification, reinforcement_card, summary_box, teaching_point,
-table_comparison, fact_grid, quote_highlight, mentor_reflection_emotive,
-gap_fix_pair, mistake_correction, clinical_case_flow, study_tip, encouragement_burst,
-concept_bridge, exam_alert, mentor_story, creative_summary.
-
-Return your answer strictly in this JSON format:
+Rules:
+• ≤120 words, friendly NEET-PG tone  
+• Use Unicode markup (**bold**, *italic*, subscripts/superscripts, arrows, emojis) — no LaTeX  
+• Output **strict JSON**:
 
 {
-  "type": "<one_of_the_styles_above>",
-  "text": "your mentor reply here"
+ "style_type": "<crisp_summary | differential_table | high_yield_fact | algorithm_flow | mentor_reflection>",
+ "mentor_reply": "<formatted mentor message>"
 }
 
-Do not include explanations, prefaces, or any extra text — only valid JSON.
+Now generate the mentor's reply.
 """
         mentor_reply = chat_with_gpt(prompt, conversation_log)
         append_mentor_message(student_id, mentor_reply)
 
         return {
             "mentor_reply": mentor_reply,
-            "phase_json": phase_json,
             "context_used": True
         }
 
