@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 from supabase_client import call_rpc, supabase
-from gpt_utils import chat_with_gpt
+from gpt_utils import chat_with_gpt  # ✅ still needed for chat only
 
 # ───────────────────────────────────────────────
 # Initialize FastAPI app
@@ -12,7 +12,7 @@ app = FastAPI(title="Paragraph Orchestra API", version="2.0.0")
 # ✅ Allow frontend (Expo / Web / React) to call this API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # replace "*" with your frontend domain later for security
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -23,10 +23,6 @@ app.add_middleware(
 # ───────────────────────────────────────────────
 def log_conversation(student_id: str, phase_type: str, phase_json: dict,
                      student_msg: str, mentor_msg: str):
-    """
-    Inserts a conversation turn into student_conversation table.
-    Each row represents one new phase (system start or next).
-    """
     try:
         data = {
             "student_id": student_id,
@@ -46,12 +42,7 @@ def log_conversation(student_id: str, phase_type: str, phase_json: dict,
 # Helper: Append ChatGPT reply directly (no RPC)
 # ───────────────────────────────────────────────
 def append_mentor_message(student_id: str, mentor_reply: str):
-    """
-    Appends ChatGPT's reply to the most recent conversation_log
-    for this student. Updates DB only — doesn't return the full log.
-    """
     try:
-        # 1️⃣ Get latest conversation row
         res = supabase.table("student_conversation")\
             .select("conversation_id, conversation_log")\
             .eq("student_id", student_id)\
@@ -67,14 +58,12 @@ def append_mentor_message(student_id: str, mentor_reply: str):
         convo_id = convo["conversation_id"]
         convo_log = convo["conversation_log"] or []
 
-        # 2️⃣ Append mentor reply
         convo_log.append({
             "role": "assistant",
             "content": mentor_reply,
             "ts": datetime.utcnow().isoformat() + "Z"
         })
 
-        # 3️⃣ Update that row in Supabase
         supabase.table("student_conversation")\
             .update({"conversation_log": convo_log})\
             .eq("conversation_id", convo_id)\
@@ -89,10 +78,6 @@ def append_mentor_message(student_id: str, mentor_reply: str):
 # ───────────────────────────────────────────────
 @app.post("/orchestrate")
 async def orchestrate(request: Request):
-    """
-    Handles all frontend actions: start, chat, next.
-    Communicates with Supabase (RPCs) + GPT for mentor responses.
-    """
     payload = await request.json()
     action = payload.get("action")
     student_id = payload.get("student_id")
@@ -110,28 +95,9 @@ async def orchestrate(request: Request):
 
         phase_type = rpc_data.get("phase_type")
         phase_json = rpc_data.get("phase_json")
+        mentor_reply = rpc_data.get("mentor_reply")  # ✅ now fetched directly from RPC
 
-        prompt = """
-You are a 30-year experienced NEET-PG teacher.
-
-You will be given JSON that includes "phase_type" (like "concept" or "mcq") and "phase_json" with content.  
-Create one short, empathetic, motivating paragraph (3–5 sentences) as if you’re talking to your student before showing that phase.  
-Return your response strictly as JSON in this format:
-
-{
-  "type": "mentor_reflection",
-  "text": "your motivational paragraph here"
-}
-
-Meaning of "mentor_reflection": a short, warm, human teacher introduction that prepares the student emotionally and intellectually for the next concept or MCQ.
-
-If phase_type = "concept": calmly introduce why this concept matters and encourage understanding, not memorization.  
-If phase_type = "mcq": energize the student, challenge them to apply reasoning, and reassure them even if they answer wrong.  
-
-Respond only with that JSON.
-"""
-        mentor_reply = chat_with_gpt(prompt, phase_json)
-
+        # ✅ no GPT call — just log and return
         log_conversation(student_id, phase_type, phase_json, "SYSTEM: start", mentor_reply)
 
         return {
@@ -155,7 +121,7 @@ Respond only with that JSON.
         phase_json = rpc_data.get("phase_json")
         conversation_log = rpc_data.get("conversation_log")
 
-        # 🧠 Use the full contextual prompt
+        # 🧠 still use GPT for live mentor interaction
         prompt = """
 You are a 30-year-experienced NEET-PG faculty mentor.
 
@@ -191,7 +157,6 @@ Return your answer strictly in this JSON format:
 Do not include explanations, prefaces, or any extra text — only valid JSON.
 """
         mentor_reply = chat_with_gpt(prompt, conversation_log)
-
         append_mentor_message(student_id, mentor_reply)
 
         return {
@@ -210,27 +175,9 @@ Do not include explanations, prefaces, or any extra text — only valid JSON.
 
         phase_type = rpc_data.get("phase_type")
         phase_json = rpc_data.get("phase_json")
+        mentor_reply = rpc_data.get("mentor_reply")  # ✅ directly from RPC
 
-        prompt = """
-You are a 30-year experienced NEET-PG teacher.
-
-You will be given JSON that includes "phase_type" (like "concept" or "mcq") and "phase_json" with content.  
-Create one short, empathetic, motivating paragraph (3–5 sentences) as if you’re talking to your student before showing that phase.  
-Return your response strictly as JSON in this format:
-
-{
-  "type": "mentor_reflection",
-  "text": "your motivational paragraph here"
-}
-
-Meaning of "mentor_reflection": a short, warm, human teacher introduction that prepares the student emotionally and intellectually for the next concept or MCQ.
-
-If phase_type = "concept": calmly introduce why this concept matters and encourage understanding, not memorization.  
-If phase_type = "mcq": energize the student, challenge them to apply reasoning, and reassure them even if they answer wrong.  
-
-Respond only with that JSON.
-"""
-        mentor_reply = chat_with_gpt(prompt, phase_json)
+        # ✅ no GPT call — just log and return
         log_conversation(student_id, phase_type, phase_json, "SYSTEM: next", mentor_reply)
 
         return {
@@ -245,5 +192,4 @@ Respond only with that JSON.
 
 @app.get("/")
 def home():
-    """Simple root route to verify API health."""
     return {"message": "🧠 Paragraph Orchestra API is running successfully!"}
