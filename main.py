@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 from supabase_client import call_rpc, supabase
 from gpt_utils import chat_with_gpt  # ✅ still needed for chat only
+import json
 
 # ───────────────────────────────────────────────
 # Initialize FastAPI app
@@ -22,13 +23,21 @@ app.add_middleware(
 # Helper: Log conversation turn (student + mentor)
 # ───────────────────────────────────────────────
 def log_conversation(student_id: str, phase_type: str, phase_json: dict,
-                     student_msg: str, mentor_msg: str):
+                     student_msg: str, mentor_msg):
     try:
+        # ✅ Serialize mentor_msg safely (handles dicts/lists/None)
+        if isinstance(mentor_msg, (dict, list)):
+            mentor_serialized = json.dumps(mentor_msg)
+        elif mentor_msg is None:
+            mentor_serialized = "null"
+        else:
+            mentor_serialized = str(mentor_msg)
+
         data = {
             "student_id": student_id,
             "phase_type": phase_type,
             "phase_json": phase_json,
-            "conversation_log": [{"student": student_msg, "mentor": mentor_msg}],
+            "conversation_log": [{"student": student_msg, "mentor": mentor_serialized}],
             "updated_at": datetime.utcnow().isoformat() + "Z"
         }
         res = supabase.table("student_conversation").insert(data).execute()
