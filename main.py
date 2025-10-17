@@ -25,7 +25,6 @@ app.add_middleware(
 def log_conversation(student_id: str, phase_type: str, phase_json: dict,
                      student_msg: str, mentor_msg):
     try:
-        # ✅ Serialize mentor_msg safely (handles dicts/lists/None)
         if isinstance(mentor_msg, (dict, list)):
             mentor_serialized = json.dumps(mentor_msg)
         elif mentor_msg is None:
@@ -104,9 +103,8 @@ async def orchestrate(request: Request):
 
         phase_type = rpc_data.get("phase_type")
         phase_json = rpc_data.get("phase_json")
-        mentor_reply = rpc_data.get("mentor_reply")  # ✅ now fetched directly from RPC
+        mentor_reply = rpc_data.get("mentor_reply")
 
-        # ✅ no GPT call — just log and return
         log_conversation(student_id, phase_type, phase_json, "SYSTEM: start", mentor_reply)
 
         return {
@@ -127,31 +125,30 @@ async def orchestrate(request: Request):
         if not rpc_data:
             return {"error": "❌ append_student_message RPC failed"}
 
-        # 🟢 Only conversation_log is needed for GPT
         conversation_log = rpc_data.get("conversation_log")
 
-        # 🧠 still use GPT for live mentor interaction — phase_json REMOVED
+        # 🧠 GPT prompt — only uses conversation_log, with consistent style_type mapping
         prompt = """
 You are a senior NEET-PG mentor with 30 yrs experience.
 
 Input = array of chat objects [{mentor?, student?}].  
-Use earlier objects only as context; answer only the **last student's question**.
+Use earlier messages as context; answer only the **last student's question**.
 
-Reply in ONE of 5 mentor styles:
-1️⃣ crisp_summary → short bullet notes
-2️⃣ differential_table → comparison table
-3️⃣ high_yield_fact → emoji fact sheet
-4️⃣ algorithm_flow → stepwise arrows (→)
-5️⃣ mentor_reflection → closing summary
+Reply in ONE of 5 mentor styles, matching the app’s rendering types:
+1️⃣ "summary" → Crisp Clinical Summary (bullet points)
+2️⃣ "differential" → Differential Table (comparison)
+3️⃣ "highyield" → High-Yield Fact Sheet (emoji bullets)
+4️⃣ "algorithm" → Algorithm / Flow Summary (→ steps)
+5️⃣ "reflection" → Mentor Reflection Block (closing summary)
 
 Rules:
-• ≤120 words, friendly NEET-PG tone  
+• ≤120 words, NEET-PG tone (friendly + exam-focused)
 • Use Unicode markup (**bold**, *italic*, subscripts/superscripts, arrows, emojis) — no LaTeX  
 • Output **strict JSON**:
 
 {
- "style_type": "<crisp_summary | differential_table | high_yield_fact | algorithm_flow | mentor_reflection>",
- "mentor_reply": "<formatted mentor message>"
+  "style_type": "<summary | differential | highyield | algorithm | reflection>",
+  "mentor_reply": "<formatted mentor message>"
 }
 
 Now generate the mentor's reply.
@@ -174,9 +171,8 @@ Now generate the mentor's reply.
 
         phase_type = rpc_data.get("phase_type")
         phase_json = rpc_data.get("phase_json")
-        mentor_reply = rpc_data.get("mentor_reply")  # ✅ directly from RPC
+        mentor_reply = rpc_data.get("mentor_reply")
 
-        # ✅ no GPT call — just log and return
         log_conversation(student_id, phase_type, phase_json, "SYSTEM: next", mentor_reply)
 
         return {
