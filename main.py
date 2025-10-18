@@ -173,6 +173,65 @@ Now generate the mentor's reply.
         return {"error": f"Unknown action '{action}'"}
 
 
+# ───────────────────────────────────────────────
+# 🟠 SUBMIT ANSWER — called from MCQChatScreen
+# ───────────────────────────────────────────────
+@app.post("/submit_answer")
+async def submit_answer(request: Request):
+    """
+    Updates student's latest phase pointer with answer details.
+    Called when the student selects an MCQ option.
+    """
+    try:
+        data = await request.json()
+        student_id = data.get("student_id")
+        student_answer = data.get("student_answer")
+        correct_answer = data.get("correct_answer")
+        is_correct = data.get("is_correct")
+        is_completed = data.get("is_completed", True)
+
+        if not student_id:
+            return {"error": "❌ Missing student_id"}
+
+        # 🧩 1️⃣ Find latest pointer row for this student
+        res = (
+            supabase.table("student_phase_pointer")
+            .select("pointer_id")
+            .eq("student_id", student_id)
+            .order("updated_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+
+        if not res.data:
+            print(f"⚠️ No active pointer found for student {student_id}")
+            return {"error": "⚠️ No active phase pointer"}
+
+        pointer_id = res.data[0]["pointer_id"]
+
+        # 🧠 2️⃣ Update pointer row with answer info (no manual updated_at!)
+        update_data = {
+            "student_answer": student_answer,
+            "correct_answer": correct_answer,
+            "is_correct": is_correct,
+            "is_completed": is_completed,
+            "answer_submit_time": datetime.utcnow().isoformat() + "Z",
+        }
+
+        supabase.table("student_phase_pointer") \
+            .update(update_data) \
+            .eq("pointer_id", pointer_id) \
+            .execute()
+
+        print(f"✅ Answer logged for student {student_id} → pointer {pointer_id}")
+        return {"status": "success", "pointer_id": pointer_id, "data": update_data}
+
+    except Exception as e:
+        print(f"❌ Error in /submit_answer: {e}")
+        # ⚙️ Never block front-end — send back soft failure
+        return {"error": "⚠️ Failed to submit answer", "details": str(e)}
+
+
 @app.get("/")
 def home():
     return {"message": "🧠 Paragraph Orchestra API is running successfully!"}
