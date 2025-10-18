@@ -20,41 +20,6 @@ app.add_middleware(
 )
 
 # ───────────────────────────────────────────────
-# Helper: Append ChatGPT reply directly (no RPC)
-# ───────────────────────────────────────────────
-def append_mentor_message(student_id: str, mentor_reply: str):
-    try:
-        res = supabase.table("student_conversation")\
-            .select("conversation_id, conversation_log")\
-            .eq("student_id", student_id)\
-            .order("updated_at", desc=True)\
-            .limit(1)\
-            .execute()
-
-        if not res.data:
-            print(f"⚠️ No active conversation found for student {student_id}")
-            return
-
-        convo = res.data[0]
-        convo_id = convo["conversation_id"]
-        convo_log = convo["conversation_log"] or []
-
-        convo_log.append({
-            "role": "assistant",
-            "content": mentor_reply,
-            "ts": datetime.utcnow().isoformat() + "Z"
-        })
-
-        supabase.table("student_conversation")\
-            .update({"conversation_log": convo_log})\
-            .eq("conversation_id", convo_id)\
-            .execute()
-
-    except Exception as e:
-        print("⚠️ Exception in append_mentor_message:", e)
-
-
-# ───────────────────────────────────────────────
 # Master Endpoint — handles all actions
 # ───────────────────────────────────────────────
 @app.post("/orchestrate")
@@ -88,17 +53,36 @@ async def orchestrate(request: Request):
     # 🟡 2️⃣ CHAT — CONTEXTUAL (concept or MCQ)
     # ───────────────────────────────
     elif action == "chat":
-        rpc_data = call_rpc("append_student_message", {
-            "p_student_id": student_id,
-            "p_message": message
-        })
+        pointer_id = None
+        convo_log = []
 
-        if not rpc_data:
-            return {"error": "❌ append_student_message RPC failed"}
+        # 1️⃣ Fetch the latest pointer and append student's message
+        try:
+            res = (
+                supabase.table("student_phase_pointer")
+                .select("pointer_id, conversation_log")
+                .eq("student_id", student_id)
+                .order("updated_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            if not res.data:
+                print(f"⚠️ No pointer found for student {student_id}")
+                return {"error": "⚠️ No active pointer for this student"}
 
-        conversation_log = rpc_data.get("conversation_log")
+            pointer = res.data[0]
+            pointer_id = pointer["pointer_id"]
+            convo_log = pointer.get("conversation_log", [])
+            convo_log.append({
+                "role": "student",
+                "content": message,
+                "ts": datetime.utcnow().isoformat() + "Z"
+            })
+        except Exception as e:
+            print(f"⚠️ Failed to fetch or append student message: {e}")
+            return {"error": "❌ Failed to fetch pointer or append message"}
 
-        # 🧠 GPT prompt — only uses conversation_log, with consistent style_type mapping
+        # 2️⃣ Build GPT prompt
         prompt = """
 You are a senior NEET-PG mentor with 30 yrs experience.
 
@@ -124,12 +108,47 @@ Rules:
 
 Now generate the mentor's reply.
 """
-        mentor_reply = chat_with_gpt(prompt, conversation_log)
-        append_mentor_message(student_id, mentor_reply)
 
+        # 3️⃣ Call GPT safely (catch all failures)
+        mentor_reply = None
+        gpt_status = "success"
+        try:
+            mentor_reply = chat_with_gpt(prompt, convo_log)
+            # If GPT returned invalid JSON, fall back
+            if not isinstance(mentor_reply, (dict, str)):
+                raise ValueError("Malformed GPT reply")
+        except Exception as e:
+            print(f"❌ GPT call failed for student {student_id}: {e}")
+            mentor_reply = {
+                "style_type": "reflection",
+                "mentor_reply": "⚠️ I'm having a small technical hiccup 🤖. Please try your question again in a bit!"
+            }
+            gpt_status = "failed"
+
+        # 4️⃣ Append mentor reply to convo log
+        convo_log.append({
+            "role": "assistant",
+            "content": mentor_reply,
+            "ts": datetime.utcnow().isoformat() + "Z"
+        })
+
+        # 5️⃣ Try updating DB — but never block frontend if it fails
+        db_status = "success"
+        try:
+            supabase.table("student_phase_pointer") \
+                .update({"conversation_log": convo_log}) \
+                .eq("pointer_id", pointer_id) \
+                .execute()
+        except Exception as e:
+            db_status = "failed"
+            print(f"⚠️ DB update failed for student {student_id}: {e}")
+
+        # 6️⃣ Always respond to frontend
         return {
             "mentor_reply": mentor_reply,
-            "context_used": True
+            "context_used": True,
+            "db_update_status": db_status,
+            "gpt_status": gpt_status
         }
 
     # ───────────────────────────────
