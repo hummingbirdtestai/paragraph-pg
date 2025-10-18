@@ -44,6 +44,7 @@ async def orchestrate(request: Request):
         mentor_reply = rpc_data.get("mentor_reply")
 
         return {
+            "student_id": student_id,  # ✅ added
             "phase_type": phase_type,
             "phase_json": phase_json,
             "mentor_reply": mentor_reply
@@ -164,6 +165,7 @@ Now generate the mentor's reply.
         mentor_reply = rpc_data.get("mentor_reply")
 
         return {
+            "student_id": student_id,  # ✅ added
             "phase_type": phase_type,
             "phase_json": phase_json,
             "mentor_reply": mentor_reply
