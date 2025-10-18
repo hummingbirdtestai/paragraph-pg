@@ -173,56 +173,39 @@ Now generate the mentor's reply.
 
 
 # ───────────────────────────────────────────────
-# 🟠 SUBMIT ANSWER — called from MCQChatScreen
+# 🟠 SUBMIT ANSWER — simplified: write to new table student_mcq_submissions
 # ───────────────────────────────────────────────
 @app.post("/submit_answer")
 async def submit_answer(request: Request):
     try:
         data = await request.json()
         student_id = data.get("student_id")
+        react_order_final = data.get("react_order_final")
         student_answer = data.get("student_answer")
         correct_answer = data.get("correct_answer")
         is_correct = data.get("is_correct")
         is_completed = data.get("is_completed", True)
 
-        if not student_id:
-            return {"error": "❌ Missing student_id"}
+        if not student_id or not react_order_final:
+            return {"error": "❌ Missing student_id or react_order_final"}
 
-        # ✅ use combination of student_id + react_order_final
-        react_order_final = data.get("react_order_final")
-        if not react_order_final:
-            return {"error": "❌ Missing react_order_final"}
-
-        res = (
-            supabase.table("student_phase_pointer")
-            .select("pointer_id")
-            .eq("student_id", student_id)
-            .eq("react_order_final", react_order_final)
-            .limit(1)
-            .execute()
-        )
-
-        if not res.data:
-            print(f"⚠️ No active pointer found for student {student_id}")
-            return {"error": "⚠️ No active phase pointer"}
-
-        pointer_id = res.data[0]["pointer_id"]
-
-        update_data = {
+        payload = {
+            "student_id": student_id,
+            "react_order_final": int(react_order_final),
             "student_answer": student_answer,
             "correct_answer": correct_answer,
             "is_correct": is_correct,
             "is_completed": is_completed,
-            "answer_submit_time": datetime.utcnow().isoformat() + "Z",
+            "submitted_at": datetime.utcnow().isoformat() + "Z",
         }
 
-        supabase.table("student_phase_pointer") \
-            .update(update_data) \
-            .eq("pointer_id", pointer_id) \
+        # ✅ UPSERT — avoids duplicates safely
+        supabase.table("student_mcq_submissions") \
+            .upsert(payload, on_conflict=["student_id", "react_order_final"]) \
             .execute()
 
-        print(f"✅ Answer logged for student {student_id} → pointer {pointer_id}")
-        return {"status": "success", "pointer_id": pointer_id, "data": update_data}
+        print(f"✅ MCQ submission saved → student {student_id}, react_order_final {react_order_final}")
+        return {"status": "success", "data": payload}
 
     except Exception as e:
         print(f"❌ Error in /submit_answer: {e}")
