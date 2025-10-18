@@ -20,33 +20,6 @@ app.add_middleware(
 )
 
 # ───────────────────────────────────────────────
-# Helper: Log conversation turn (student + mentor)
-# ───────────────────────────────────────────────
-def log_conversation(student_id: str, phase_type: str, phase_json: dict,
-                     student_msg: str, mentor_msg):
-    try:
-        if isinstance(mentor_msg, (dict, list)):
-            mentor_serialized = json.dumps(mentor_msg)
-        elif mentor_msg is None:
-            mentor_serialized = "null"
-        else:
-            mentor_serialized = str(mentor_msg)
-
-        data = {
-            "student_id": student_id,
-            "phase_type": phase_type,
-            "phase_json": phase_json,
-            "conversation_log": [{"student": student_msg, "mentor": mentor_serialized}],
-            "updated_at": datetime.utcnow().isoformat() + "Z"
-        }
-        res = supabase.table("student_conversation").insert(data).execute()
-        if res.error:
-            print("❌ Error inserting into student_conversation:", res.error)
-    except Exception as e:
-        print("⚠️ Exception during log_conversation:", e)
-
-
-# ───────────────────────────────────────────────
 # Helper: Append ChatGPT reply directly (no RPC)
 # ───────────────────────────────────────────────
 def append_mentor_message(student_id: str, mentor_reply: str):
@@ -104,8 +77,6 @@ async def orchestrate(request: Request):
         phase_type = rpc_data.get("phase_type")
         phase_json = rpc_data.get("phase_json")
         mentor_reply = rpc_data.get("mentor_reply")
-
-        log_conversation(student_id, phase_type, phase_json, "SYSTEM: start", mentor_reply)
 
         return {
             "phase_type": phase_type,
@@ -172,8 +143,6 @@ Now generate the mentor's reply.
         phase_type = rpc_data.get("phase_type")
         phase_json = rpc_data.get("phase_json")
         mentor_reply = rpc_data.get("mentor_reply")
-
-        log_conversation(student_id, phase_type, phase_json, "SYSTEM: next", mentor_reply)
 
         return {
             "phase_type": phase_type,
