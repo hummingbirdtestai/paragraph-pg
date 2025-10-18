@@ -42,9 +42,11 @@ async def orchestrate(request: Request):
         phase_type = rpc_data.get("phase_type")
         phase_json = rpc_data.get("phase_json")
         mentor_reply = rpc_data.get("mentor_reply")
+        react_order_final = rpc_data.get("react_order_final")  # ✅ new
 
         return {
-            "student_id": student_id,  # ✅ added
+            "student_id": student_id,
+            "react_order_final": react_order_final,  # ✅ added
             "phase_type": phase_type,
             "phase_json": phase_json,
             "mentor_reply": mentor_reply
@@ -57,7 +59,6 @@ async def orchestrate(request: Request):
         pointer_id = None
         convo_log = []
 
-        # 1️⃣ Fetch the latest pointer and append student's message
         try:
             res = (
                 supabase.table("student_phase_pointer")
@@ -83,7 +84,6 @@ async def orchestrate(request: Request):
             print(f"⚠️ Failed to fetch or append student message: {e}")
             return {"error": "❌ Failed to fetch pointer or append message"}
 
-        # 2️⃣ Build GPT prompt
         prompt = """
 You are a senior NEET-PG mentor with 30 yrs experience.
 
@@ -110,12 +110,10 @@ Rules:
 Now generate the mentor's reply.
 """
 
-        # 3️⃣ Call GPT safely (catch all failures)
         mentor_reply = None
         gpt_status = "success"
         try:
             mentor_reply = chat_with_gpt(prompt, convo_log)
-            # If GPT returned invalid JSON, fall back
             if not isinstance(mentor_reply, (dict, str)):
                 raise ValueError("Malformed GPT reply")
         except Exception as e:
@@ -126,14 +124,12 @@ Now generate the mentor's reply.
             }
             gpt_status = "failed"
 
-        # 4️⃣ Append mentor reply to convo log
         convo_log.append({
             "role": "assistant",
             "content": mentor_reply,
             "ts": datetime.utcnow().isoformat() + "Z"
         })
 
-        # 5️⃣ Try updating DB — but never block frontend if it fails
         db_status = "success"
         try:
             supabase.table("student_phase_pointer") \
@@ -144,7 +140,6 @@ Now generate the mentor's reply.
             db_status = "failed"
             print(f"⚠️ DB update failed for student {student_id}: {e}")
 
-        # 6️⃣ Always respond to frontend
         return {
             "mentor_reply": mentor_reply,
             "context_used": True,
@@ -163,9 +158,11 @@ Now generate the mentor's reply.
         phase_type = rpc_data.get("phase_type")
         phase_json = rpc_data.get("phase_json")
         mentor_reply = rpc_data.get("mentor_reply")
+        react_order_final = rpc_data.get("react_order_final")  # ✅ new
 
         return {
-            "student_id": student_id,  # ✅ added
+            "student_id": student_id,
+            "react_order_final": react_order_final,  # ✅ added
             "phase_type": phase_type,
             "phase_json": phase_json,
             "mentor_reply": mentor_reply
@@ -180,10 +177,6 @@ Now generate the mentor's reply.
 # ───────────────────────────────────────────────
 @app.post("/submit_answer")
 async def submit_answer(request: Request):
-    """
-    Updates student's latest phase pointer with answer details.
-    Called when the student selects an MCQ option.
-    """
     try:
         data = await request.json()
         student_id = data.get("student_id")
@@ -195,12 +188,16 @@ async def submit_answer(request: Request):
         if not student_id:
             return {"error": "❌ Missing student_id"}
 
-        # 🧩 1️⃣ Find latest pointer row for this student
+        # ✅ use combination of student_id + react_order_final
+        react_order_final = data.get("react_order_final")
+        if not react_order_final:
+            return {"error": "❌ Missing react_order_final"}
+
         res = (
             supabase.table("student_phase_pointer")
             .select("pointer_id")
             .eq("student_id", student_id)
-            .order("updated_at", desc=True)
+            .eq("react_order_final", react_order_final)
             .limit(1)
             .execute()
         )
@@ -211,7 +208,6 @@ async def submit_answer(request: Request):
 
         pointer_id = res.data[0]["pointer_id"]
 
-        # 🧠 2️⃣ Update pointer row with answer info (no manual updated_at!)
         update_data = {
             "student_answer": student_answer,
             "correct_answer": correct_answer,
@@ -230,7 +226,6 @@ async def submit_answer(request: Request):
 
     except Exception as e:
         print(f"❌ Error in /submit_answer: {e}")
-        # ⚙️ Never block front-end — send back soft failure
         return {"error": "⚠️ Failed to submit answer", "details": str(e)}
 
 
