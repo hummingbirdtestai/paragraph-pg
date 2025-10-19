@@ -129,6 +129,18 @@ Rules:
         gpt_status = "success"
         try:
             mentor_reply = chat_with_gpt(prompt, convo_log)
+
+            # ✅ Surgical fix — ensure parsed JSON (real dict)
+            if isinstance(mentor_reply, str):
+                try:
+                    mentor_reply = json.loads(mentor_reply)
+                except Exception as e:
+                    print(f"⚠️ Failed to parse GPT JSON: {e}")
+                    mentor_reply = {
+                        "style_type": "reflection",
+                        "mentor_reply": "⚠️ Response format issue — please try again!"
+                    }
+
             if not isinstance(mentor_reply, (dict, str)):
                 raise ValueError("Malformed GPT reply")
         except Exception as e:
@@ -230,4 +242,3 @@ async def submit_answer(request: Request):
 @app.get("/")
 def home():
     return {"message": "🧠 Paragraph Orchestra API is running successfully!"}
-
