@@ -42,18 +42,18 @@ async def orchestrate(request: Request):
         phase_type = rpc_data.get("phase_type")
         phase_json = rpc_data.get("phase_json")
         mentor_reply = rpc_data.get("mentor_reply")
-        react_order_final = rpc_data.get("react_order_final")  # ✅ new
+        react_order_final = rpc_data.get("react_order_final")
 
         return {
             "student_id": student_id,
-            "react_order_final": react_order_final,  # ✅ added
+            "react_order_final": react_order_final,
             "phase_type": phase_type,
             "phase_json": phase_json,
             "mentor_reply": mentor_reply
         }
 
     # ───────────────────────────────
-    # 🟡 2️⃣ CHAT — CONTEXTUAL (concept or MCQ)
+    # 🟡 2️⃣ CHAT — CONTEXTUAL
     # ───────────────────────────────
     elif action == "chat":
         pointer_id = None
@@ -84,71 +84,54 @@ async def orchestrate(request: Request):
             print(f"⚠️ Failed to fetch or append student message: {e}")
             return {"error": "❌ Failed to fetch pointer or append message"}
 
+        # ✅ Updated Prompt — Markdown Natural Mentor Reply
         prompt = """
-You are a senior NEET-PG mentor (30 yrs experience).
+You are a senior NEET-PG mentor with 30 years’ experience. 
+You are guiding a medical student preparing for NEET-PG.
 
-Input: array of chat objects [{mentor?, student?}].  
-Use prior messages as context, but reply only to the last student message.
+You are given the full conversation log — a list of chat objects in the format:
+[{ "role": "mentor" | "student", "content": "..." }]
 
-Reply in ONE of 5 styles (each maps to a renderer):
+👉 Use earlier messages only for context, but reply **only to the latest student message**.
 
-1️⃣ summary → Crisp Clinical Summary (bullets)
-   Example:
-   { "style_type": "summary",
-     "mentor_reply": "*Types of Shock*\n• *Hypovolemic:* ↓volume (bleeding)\n• *Cardiogenic:* pump failure\n• *Distributive:* vasodilation (sepsis)" }
+🧠 Your reply must be in **natural Markdown** using **Unicode symbols** (no JSON, no code block).  
+It should be formatted for a WhatsApp-like dark chat bubble — clear, concise, and NEET-PG exam-oriented.
 
-2️⃣ differential → Table-style comparison
-   Example:
-   { "style_type": "differential",
-     "mentor_reply": "Feature | Type I | Type II\nPaO₂ | ↓ | ↓\nPaCO₂ | Normal | ↑\nA–a Gradient | ↑ | Normal\n\n*Bottom line:* Type I = oxygenation issue; Type II = ventilation issue." }
+### Formatting Rules
+- Use Markdown headings:
+  - `#`, `##`, `###` for title / subheading / subsection
+- Use bold (**text**) and italic (_text_)
+- Use lists and numbering for structured points
+- Use Unicode arrows (→, ↑, ↓), subscripts/superscripts (₁, ₂, ³, ⁺, ⁻)
+- Use emojis where relevant (💡 🧠 🩸 ⚕️ 📘)
+- Use line breaks for readability
+- ≤150 words per answer
+- Do **not** explain or describe your format — just reply naturally.
 
-3️⃣ highyield → High-Yield Fact Sheet (emoji bullets)
-   Example:
-   { "style_type": "highyield",
-     "mentor_reply": "*High-Yield — Anemia*\n🔹 *MCV < 80:* Microcytic (iron deficiency)\n🔹 *MCV > 100:* Macrocytic (B₁₂/folate)\n🔹 *Retic ↑:* Hemolysis or blood loss" }
+### Example
+# Respiratory Failure  
+## Stepwise Approach  
+1. Check **ABG** → PaO₂ < 60 mm Hg?  
+2. Assess **PaCO₂** → ↑ → Type II  
+3. Determine cause → airway, lung, or pump failure  
 
-4️⃣ algorithm → Stepwise / Flow approach
-   Example:
-   { "style_type": "algorithm",
-     "mentor_reply": "*Approach to Hyponatremia*\n🩸 *Step 1:* Check serum osmolality\n⚙ *Step 2:* Assess volume status → hypovolemic / euvolemic / hypervolemic\n💡 *Step 3:* Identify cause & correct slowly" }
-
-5️⃣ reflection → Mentor Reflection (closing summary)
-   Example:
-   { "style_type": "reflection",
-     "mentor_reply": "🌟 Excellent! Always connect physiology with pathology — that’s how NEET-PG integrates concepts." }
-
-Rules:
-• ≤120 words  
-• NEET-PG tone: friendly, exam-oriented  
-• Use **bold**, *italic*, subscripts/superscripts, arrows, emojis (no LaTeX)  
-• Output **strict JSON only** — no explanations
-
+💡 *Type I:* oxygenation defect  
+💡 *Type II:* ventilation defect
 """
 
         mentor_reply = None
         gpt_status = "success"
+
         try:
             mentor_reply = chat_with_gpt(prompt, convo_log)
 
-            # ✅ Surgical fix — ensure parsed JSON (real dict)
-            if isinstance(mentor_reply, str):
-                try:
-                    mentor_reply = json.loads(mentor_reply)
-                except Exception as e:
-                    print(f"⚠️ Failed to parse GPT JSON: {e}")
-                    mentor_reply = {
-                        "style_type": "reflection",
-                        "mentor_reply": "⚠️ Response format issue — please try again!"
-                    }
+            # ✅ No parsing or stringification — keep raw Markdown string
+            if not isinstance(mentor_reply, str):
+                mentor_reply = str(mentor_reply)
 
-            if not isinstance(mentor_reply, (dict, str)):
-                raise ValueError("Malformed GPT reply")
         except Exception as e:
             print(f"❌ GPT call failed for student {student_id}: {e}")
-            mentor_reply = {
-                "style_type": "reflection",
-                "mentor_reply": "⚠️ I'm having a small technical hiccup 🤖. Please try your question again in a bit!"
-            }
+            mentor_reply = "⚠️ I'm having a small technical hiccup 🤖. Please try your question again in a bit!"
             gpt_status = "failed"
 
         convo_log.append({
@@ -185,11 +168,11 @@ Rules:
         phase_type = rpc_data.get("phase_type")
         phase_json = rpc_data.get("phase_json")
         mentor_reply = rpc_data.get("mentor_reply")
-        react_order_final = rpc_data.get("react_order_final")  # ✅ new
+        react_order_final = rpc_data.get("react_order_final")
 
         return {
             "student_id": student_id,
-            "react_order_final": react_order_final,  # ✅ added
+            "react_order_final": react_order_final,
             "phase_type": phase_type,
             "phase_json": phase_json,
             "mentor_reply": mentor_reply
@@ -200,7 +183,7 @@ Rules:
 
 
 # ───────────────────────────────────────────────
-# 🟠 SUBMIT ANSWER — simplified: write to new table student_mcq_submissions
+# 🟠 SUBMIT ANSWER — simplified
 # ───────────────────────────────────────────────
 @app.post("/submit_answer")
 async def submit_answer(request: Request):
@@ -226,7 +209,6 @@ async def submit_answer(request: Request):
             "submitted_at": datetime.utcnow().isoformat() + "Z",
         }
 
-        # ✅ UPSERT — avoids duplicates safely
         supabase.table("student_mcq_submissions") \
             .upsert(payload, on_conflict=["student_id", "react_order_final"]) \
             .execute()
