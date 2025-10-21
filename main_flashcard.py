@@ -27,6 +27,7 @@ async def flashcard_orchestrate(request: Request):
     payload = await request.json()
     action = payload.get("action")
     student_id = payload.get("student_id")
+    subject_id = payload.get("subject_id")  # 🆕 Added line
     message = payload.get("message")
 
     print(f"🎬 Flashcard Action = {action}, Student = {student_id}")
@@ -35,7 +36,10 @@ async def flashcard_orchestrate(request: Request):
     # 🟢 1️⃣ START_FLASHCARD
     # ───────────────────────────────
     if action == "start_flashcard":
-        rpc_data = call_rpc("start_flashcard_orchestra", {"p_student_id": student_id})
+        rpc_data = call_rpc("start_flashcard_orchestra", {       # 🆕 Updated
+            "p_student_id": student_id,
+            "p_subject_id": subject_id
+        })
         if not rpc_data:
             return {"error": "❌ start_flashcard_orchestra RPC failed"}
 
@@ -151,7 +155,10 @@ It should be concise, focused on reinforcing key flashcard recall concepts, and 
     # 🔵 3️⃣ NEXT_FLASHCARD — advance to next phase
     # ───────────────────────────────
     elif action == "next_flashcard":
-        rpc_data = call_rpc("next_flashcard_orchestra", {"p_student_id": student_id})
+        rpc_data = call_rpc("next_flashcard_orchestra", {       # 🆕 Updated
+            "p_student_id": student_id,
+            "p_subject_id": subject_id
+        })
         if not rpc_data:
             return {"error": "❌ next_flashcard_orchestra RPC failed"}
 
