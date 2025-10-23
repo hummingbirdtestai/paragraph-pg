@@ -8,7 +8,7 @@ import json, uuid
 # ───────────────────────────────────────────────
 # Initialize FastAPI app
 # ───────────────────────────────────────────────
-app = FastAPI(title="Flashcard Orchestra API", version="2.1.0")
+app = FastAPI(title="Flashcard Orchestra API", version="2.2.0")
 
 # ✅ Allow frontend (Expo / Web / React) to call this API
 app.add_middleware(
@@ -30,6 +30,7 @@ def _make_json_safe(data):
     if isinstance(data, list):
         return [_make_json_safe(v) for v in data]
     return data
+
 
 # ───────────────────────────────────────────────
 # Master Endpoint — handles all flashcard actions
@@ -55,30 +56,14 @@ async def flashcard_orchestrate(request: Request):
         if not rpc_data:
             return {"error": "❌ start_flashcard_orchestra RPC failed"}
 
-        phase_type = rpc_data.get("phase_type")
-        phase_json = rpc_data.get("phase_json")
-        mentor_reply = rpc_data.get("mentor_reply")
-        react_order_final = rpc_data.get("react_order_final")
-        concept = rpc_data.get("concept")
-        subject = rpc_data.get("subject")
+        safe_phase_json = _make_json_safe(rpc_data.get("phase_json"))
+        safe_mentor_reply = _make_json_safe(rpc_data.get("mentor_reply"))
 
-        # 🧩 Debug print for JSON
-        print("🧩 phase_json received from RPC:")
-        try:
-            print(json.dumps(phase_json, indent=2)[:500])
-        except Exception:
-            print("⚠️ Could not pretty-print phase_json")
-
-        # ✅ Ensure phase_json is safe before next RPC
-        safe_phase_json = _make_json_safe(phase_json)
-        safe_mentor_reply = _make_json_safe(mentor_reply)
-
-        # 🟢 Update pointer table safely
         try:
             call_rpc("update_flashcard_pointer_status", {
                 "p_student_id": student_id,
                 "p_subject_id": subject_id,
-                "p_react_order_final": react_order_final,
+                "p_react_order_final": rpc_data.get("react_order_final"),
                 "p_phase_json": safe_phase_json,
                 "p_mentor_reply": safe_mentor_reply
             })
@@ -87,14 +72,14 @@ async def flashcard_orchestrate(request: Request):
 
         return {
             "student_id": student_id,
-            "react_order_final": react_order_final,
-            "phase_type": phase_type,
+            "react_order_final": rpc_data.get("react_order_final"),
+            "phase_type": rpc_data.get("phase_type"),
             "phase_json": safe_phase_json,
             "mentor_reply": safe_mentor_reply,
-            "concept": concept,
-            "subject": subject,
-            "seq_num": rpc_data.get("seq_num"),           # 🆕 added
-            "total_count": rpc_data.get("total_count")    # 🆕 added
+            "concept": rpc_data.get("concept"),
+            "subject": rpc_data.get("subject"),
+            "seq_num": rpc_data.get("seq_num"),
+            "total_count": rpc_data.get("total_count")
         }
 
     # ───────────────────────────────
@@ -129,16 +114,13 @@ async def flashcard_orchestrate(request: Request):
             print(f"⚠️ Failed to fetch or append student flashcard message: {e}")
             return {"error": "❌ Failed to fetch pointer or append message"}
 
-        # ✅ GPT mentor reply
         prompt = """
 You are a senior NEET-PG mentor with 30 years’ experience.
 You are helping a student with flashcard-based rapid revision.
-
 You are given the full flashcard conversation log — a list of chat objects:
 [{ "role": "mentor" | "student", "content": "..." }]
-
 👉 Reply only to the latest student message.
-🧠 Reply in natural Markdown using Unicode symbols, ≤100 words, concise and high-yield.
+🧠 Reply in Markdown using Unicode symbols, ≤100 words, concise and high-yield.
 """
         mentor_reply = None
         gpt_status = "success"
@@ -186,27 +168,14 @@ You are given the full flashcard conversation log — a list of chat objects:
         if not rpc_data:
             return {"error": "❌ next_flashcard_orchestra RPC failed"}
 
-        phase_type = rpc_data.get("phase_type")
-        phase_json = rpc_data.get("phase_json")
-        mentor_reply = rpc_data.get("mentor_reply")
-        react_order_final = rpc_data.get("react_order_final")
-        concept = rpc_data.get("concept")
-        subject = rpc_data.get("subject")
-
-        print("🧩 phase_json for NEXT_FLASHCARD:")
-        try:
-            print(json.dumps(phase_json, indent=2)[:500])
-        except Exception:
-            print("⚠️ Could not print phase_json")
-
-        safe_phase_json = _make_json_safe(phase_json)
-        safe_mentor_reply = _make_json_safe(mentor_reply)
+        safe_phase_json = _make_json_safe(rpc_data.get("phase_json"))
+        safe_mentor_reply = _make_json_safe(rpc_data.get("mentor_reply"))
 
         try:
             call_rpc("update_flashcard_pointer_status", {
                 "p_student_id": student_id,
                 "p_subject_id": subject_id,
-                "p_react_order_final": react_order_final,
+                "p_react_order_final": rpc_data.get("react_order_final"),
                 "p_phase_json": safe_phase_json,
                 "p_mentor_reply": safe_mentor_reply
             })
@@ -215,14 +184,69 @@ You are given the full flashcard conversation log — a list of chat objects:
 
         return {
             "student_id": student_id,
-            "react_order_final": react_order_final,
-            "phase_type": phase_type,
+            "react_order_final": rpc_data.get("react_order_final"),
+            "phase_type": rpc_data.get("phase_type"),
             "phase_json": safe_phase_json,
             "mentor_reply": safe_mentor_reply,
-            "concept": concept,
-            "subject": subject,
-            "seq_num": rpc_data.get("seq_num"),           # 🆕 added
-            "total_count": rpc_data.get("total_count")    # 🆕 added
+            "concept": rpc_data.get("concept"),
+            "subject": rpc_data.get("subject"),
+            "seq_num": rpc_data.get("seq_num"),
+            "total_count": rpc_data.get("total_count")
+        }
+
+    # ───────────────────────────────
+    # 🟣 4️⃣ START_BOOKMARKED_REVISION
+    # ───────────────────────────────
+    elif action == "start_bookmarked_revision":
+        rpc_data = call_rpc("get_bookmarked_flashcards", {
+            "p_student_id": student_id,
+            "p_subject_id": subject_id
+        })
+        if not rpc_data:
+            return {"error": "❌ get_bookmarked_flashcards RPC failed"}
+
+        safe_data = _make_json_safe(rpc_data)
+        return {
+            "student_id": student_id,
+            "subject_id": safe_data.get("subject_id"),
+            "subject_name": safe_data.get("subject_name"),
+            "type": safe_data.get("type"),
+            "phase_type": safe_data.get("phase_type"),
+            "flashcard_json": safe_data.get("flashcard_json"),
+            "mentor_reply": safe_data.get("mentor_reply"),
+            "concept": safe_data.get("concept"),
+            "updated_time": safe_data.get("updated_time"),
+            "seq_num": safe_data.get("seq_num"),
+            "total_count": safe_data.get("total_count")
+        }
+
+    # ───────────────────────────────
+    # 🟠 5️⃣ NEXT_BOOKMARKED_FLASHCARD
+    # ───────────────────────────────
+    elif action == "next_bookmarked_flashcard":
+        last_updated_time = payload.get("last_updated_time")
+
+        rpc_data = call_rpc("get_next_bookmarked_flashcard", {
+            "p_student_id": student_id,
+            "p_subject_id": subject_id,
+            "p_last_updated_time": last_updated_time
+        })
+        if not rpc_data:
+            return {"error": "❌ get_next_bookmarked_flashcard RPC failed"}
+
+        safe_data = _make_json_safe(rpc_data)
+        return {
+            "student_id": student_id,
+            "subject_id": safe_data.get("subject_id"),
+            "subject_name": safe_data.get("subject_name"),
+            "type": safe_data.get("type"),
+            "phase_type": safe_data.get("phase_type"),
+            "flashcard_json": safe_data.get("flashcard_json"),
+            "mentor_reply": safe_data.get("mentor_reply"),
+            "concept": safe_data.get("concept"),
+            "updated_time": safe_data.get("updated_time"),
+            "seq_num": safe_data.get("seq_num"),
+            "total_count": safe_data.get("total_count")
         }
 
     else:
@@ -230,7 +254,7 @@ You are given the full flashcard conversation log — a list of chat objects:
 
 
 # ───────────────────────────────────────────────
-# 🟠 SUBMIT_FLASHCARD_PROGRESS
+# 🟢 SUBMIT_FLASHCARD_PROGRESS
 # ───────────────────────────────────────────────
 @app.post("/submit_flashcard_progress")
 async def submit_flashcard_progress(request: Request):
