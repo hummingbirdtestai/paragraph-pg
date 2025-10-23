@@ -92,7 +92,9 @@ async def flashcard_orchestrate(request: Request):
             "phase_json": safe_phase_json,
             "mentor_reply": safe_mentor_reply,
             "concept": concept,
-            "subject": subject
+            "subject": subject,
+            "seq_num": rpc_data.get("seq_num"),           # 🆕 added
+            "total_count": rpc_data.get("total_count")    # 🆕 added
         }
 
     # ───────────────────────────────
@@ -218,7 +220,9 @@ You are given the full flashcard conversation log — a list of chat objects:
             "phase_json": safe_phase_json,
             "mentor_reply": safe_mentor_reply,
             "concept": concept,
-            "subject": subject
+            "subject": subject,
+            "seq_num": rpc_data.get("seq_num"),           # 🆕 added
+            "total_count": rpc_data.get("total_count")    # 🆕 added
         }
 
     else:
