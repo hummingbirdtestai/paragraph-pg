@@ -154,7 +154,7 @@ and emojis (💡🧠⚕️📘) naturally. Do NOT output code blocks or JSON.
     # 🔖 4️⃣ BOOKMARK REVIEW FLOW
     # ───────────────────────────────
     elif action == "bookmark_review":
-        rpc_data = call_rpc("get_first_bookmark_orchestra", {
+        rpc_data = call_rpc("get_first_bookmarked_phase", {
             "p_student_id": student_id,
             "p_subject_id": subject_id
         })
@@ -171,7 +171,7 @@ and emojis (💡🧠⚕️📘) naturally. Do NOT output code blocks or JSON.
         if not last_time:
             return {"error": "❌ Missing bookmark_updated_time"}
 
-        rpc_data = call_rpc("get_next_bookmark_orchestra", {
+        rpc_data = call_rpc("get_next_bookmarked_phase", {
             "p_student_id": student_id,
             "p_subject_id": subject_id,
             "p_last_bookmark_time": last_time
@@ -234,3 +234,4 @@ async def submit_answer(request: Request):
 @app.get("/")
 def home():
     return {"message": "🧠 Paragraph Orchestra API (bookmark review ready, no toggle) is live!"}
+
