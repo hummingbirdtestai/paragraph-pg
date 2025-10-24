@@ -8,7 +8,7 @@ import json
 # ───────────────────────────────────────────────
 # Initialize FastAPI app
 # ───────────────────────────────────────────────
-app = FastAPI(title="Paragraph Orchestra API", version="2.1.0")
+app = FastAPI(title="Paragraph Orchestra API", version="2.2.0")
 
 # ✅ Allow frontend (Expo / Web / React) to call this API
 app.add_middleware(
@@ -27,7 +27,7 @@ async def orchestrate(request: Request):
     payload = await request.json()
     action = payload.get("action")
     student_id = payload.get("student_id")
-    subject_id = payload.get("subject_id")  # ✅ NEW PARAM (passed from ChatScreen)
+    subject_id = payload.get("subject_id")
     message = payload.get("message")
 
     print(f"🎬 Action = {action}, Student = {student_id}, Subject = {subject_id}")
@@ -36,25 +36,22 @@ async def orchestrate(request: Request):
     # 🟢 1️⃣ START
     # ───────────────────────────────
     if action == "start":
-        rpc_data = call_rpc(
-            "start_orchestra",
-            {"p_student_id": student_id, "p_subject_id": subject_id},
-        )
-        if not rpc_data:
-            return {"error": "❌ start_orchestra RPC failed"}
+        rpc_data = call_rpc("start_orchestra", {
+            "p_student_id": student_id,
+            "p_subject_id": subject_id
+        })
 
-        phase_type = rpc_data.get("phase_type")
-        phase_json = rpc_data.get("phase_json")
-        mentor_reply = rpc_data.get("mentor_reply")
-        react_order_final = rpc_data.get("react_order_final")
+        if not rpc_data or "phase_type" not in rpc_data:
+            print(f"⚠️ RPC failed or returned empty → {rpc_data}")
+            return {"error": "❌ start_orchestra RPC failed"}
 
         return {
             "student_id": student_id,
             "subject_id": subject_id,
-            "react_order_final": react_order_final,
-            "phase_type": phase_type,
-            "phase_json": phase_json,
-            "mentor_reply": mentor_reply,
+            "react_order_final": rpc_data.get("react_order_final"),
+            "phase_type": rpc_data.get("phase_type"),
+            "phase_json": rpc_data.get("phase_json"),
+            "mentor_reply": rpc_data.get("mentor_reply")  # keep for frontend display only
         }
 
     # ───────────────────────────────
@@ -69,11 +66,12 @@ async def orchestrate(request: Request):
                 supabase.table("student_phase_pointer")
                 .select("pointer_id, conversation_log")
                 .eq("student_id", student_id)
-                .eq("subject_id", subject_id)  # ✅ NEW FILTER
+                .eq("subject_id", subject_id)
                 .order("updated_at", desc=True)
                 .limit(1)
                 .execute()
             )
+
             if not res.data:
                 print(f"⚠️ No pointer found for student {student_id}, subject {subject_id}")
                 return {"error": "⚠️ No active pointer for this subject"}
@@ -81,13 +79,11 @@ async def orchestrate(request: Request):
             pointer = res.data[0]
             pointer_id = pointer["pointer_id"]
             convo_log = pointer.get("conversation_log", [])
-            convo_log.append(
-                {
-                    "role": "student",
-                    "content": message,
-                    "ts": datetime.utcnow().isoformat() + "Z",
-                }
-            )
+            convo_log.append({
+                "role": "student",
+                "content": message,
+                "ts": datetime.utcnow().isoformat() + "Z",
+            })
         except Exception as e:
             print(f"⚠️ Failed to fetch or append student message: {e}")
             return {"error": "❌ Failed to fetch pointer or append message"}
@@ -115,16 +111,6 @@ It should be formatted for a WhatsApp-like dark chat bubble — clear, concise, 
 - Use line breaks for readability
 - ≤150 words per answer
 - Do **not** explain or describe your format — just reply naturally.
-
-### Example
-# Respiratory Failure  
-## Stepwise Approach  
-1. Check **ABG** → PaO₂ < 60 mm Hg?  
-2. Assess **PaCO₂** → ↑ → Type II  
-3. Determine cause → airway, lung, or pump failure  
-
-💡 *Type I:* oxygenation defect  
-💡 *Type II:* ventilation defect
 """
 
         mentor_reply = None
@@ -139,13 +125,11 @@ It should be formatted for a WhatsApp-like dark chat bubble — clear, concise, 
             mentor_reply = "⚠️ I'm having a small technical hiccup 🤖. Please try again soon!"
             gpt_status = "failed"
 
-        convo_log.append(
-            {
-                "role": "assistant",
-                "content": mentor_reply,
-                "ts": datetime.utcnow().isoformat() + "Z",
-            }
-        )
+        convo_log.append({
+            "role": "assistant",
+            "content": mentor_reply,
+            "ts": datetime.utcnow().isoformat() + "Z",
+        })
 
         db_status = "success"
         try:
@@ -168,25 +152,22 @@ It should be formatted for a WhatsApp-like dark chat bubble — clear, concise, 
     # 🔵 3️⃣ NEXT — advance to next phase
     # ───────────────────────────────
     elif action == "next":
-        rpc_data = call_rpc(
-            "next_orchestra",
-            {"p_student_id": student_id, "p_subject_id": subject_id},
-        )
-        if not rpc_data:
-            return {"error": "❌ next_orchestra RPC failed"}
+        rpc_data = call_rpc("next_orchestra", {
+            "p_student_id": student_id,
+            "p_subject_id": subject_id
+        })
 
-        phase_type = rpc_data.get("phase_type")
-        phase_json = rpc_data.get("phase_json")
-        mentor_reply = rpc_data.get("mentor_reply")
-        react_order_final = rpc_data.get("react_order_final")
+        if not rpc_data or "phase_type" not in rpc_data:
+            print(f"⚠️ RPC failed or returned empty → {rpc_data}")
+            return {"error": "❌ next_orchestra RPC failed"}
 
         return {
             "student_id": student_id,
             "subject_id": subject_id,
-            "react_order_final": react_order_final,
-            "phase_type": phase_type,
-            "phase_json": phase_json,
-            "mentor_reply": mentor_reply,
+            "react_order_final": rpc_data.get("react_order_final"),
+            "phase_type": rpc_data.get("phase_type"),
+            "phase_json": rpc_data.get("phase_json"),
+            "mentor_reply": rpc_data.get("mentor_reply")  # for UI use
         }
 
     else:
@@ -201,7 +182,7 @@ async def submit_answer(request: Request):
     try:
         data = await request.json()
         student_id = data.get("student_id")
-        subject_id = data.get("subject_id")  # ✅ NEW FIELD
+        subject_id = data.get("subject_id")
         react_order_final = data.get("react_order_final")
         student_answer = data.get("student_answer")
         correct_answer = data.get("correct_answer")
@@ -213,7 +194,7 @@ async def submit_answer(request: Request):
 
         payload = {
             "student_id": student_id,
-            "subject_id": subject_id,  # ✅ ensure linkage
+            "subject_id": subject_id,
             "react_order_final": int(react_order_final),
             "student_answer": student_answer,
             "correct_answer": correct_answer,
@@ -236,4 +217,4 @@ async def submit_answer(request: Request):
 
 @app.get("/")
 def home():
-    return {"message": "🧠 Paragraph Orchestra API (subject-aware) is running successfully!"}
+    return {"message": "🧠 Paragraph Orchestra API (subject-aware, optimized) is running successfully!"}
