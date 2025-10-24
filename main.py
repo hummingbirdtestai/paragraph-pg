@@ -8,7 +8,7 @@ import json
 # ───────────────────────────────────────────────
 # Initialize FastAPI app
 # ───────────────────────────────────────────────
-app = FastAPI(title="Paragraph Orchestra API", version="2.2.0")
+app = FastAPI(title="Paragraph Orchestra API", version="2.3.1")
 
 # ✅ Allow frontend (Expo / Web / React) to call this API
 app.add_middleware(
@@ -18,6 +18,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # ───────────────────────────────────────────────
 # Master Endpoint — handles all actions
@@ -51,11 +52,11 @@ async def orchestrate(request: Request):
             "react_order_final": rpc_data.get("react_order_final"),
             "phase_type": rpc_data.get("phase_type"),
             "phase_json": rpc_data.get("phase_json"),
-            "mentor_reply": rpc_data.get("mentor_reply")  # keep for frontend display only
+            "mentor_reply": rpc_data.get("mentor_reply"),
         }
 
     # ───────────────────────────────
-    # 🟡 2️⃣ CHAT — CONTEXTUAL
+    # 🟡 2️⃣ CHAT — CONTEXTUAL GPT REPLY
     # ───────────────────────────────
     elif action == "chat":
         pointer_id = None
@@ -73,7 +74,6 @@ async def orchestrate(request: Request):
             )
 
             if not res.data:
-                print(f"⚠️ No pointer found for student {student_id}, subject {subject_id}")
                 return {"error": "⚠️ No active pointer for this subject"}
 
             pointer = res.data[0]
@@ -85,45 +85,25 @@ async def orchestrate(request: Request):
                 "ts": datetime.utcnow().isoformat() + "Z",
             })
         except Exception as e:
-            print(f"⚠️ Failed to fetch or append student message: {e}")
-            return {"error": "❌ Failed to fetch pointer or append message"}
+            print(f"⚠️ Failed to fetch/append message: {e}")
+            return {"error": "❌ Conversation log fetch failed"}
 
-        # ✅ Mentor Prompt — Markdown, Natural NEET-PG Explanation
+        # ✅ Mentor prompt
         prompt = """
 You are a senior NEET-PG mentor with 30 years’ experience.
-You are guiding a medical student preparing for NEET-PG.
-
-You are given the full conversation log — a list of chat objects in the format:
-[{ "role": "mentor" | "student", "content": "..." }]
-
-👉 Use earlier messages only for context, but reply **only to the latest student message**.
-
-🧠 Your reply must be in **natural Markdown** using **Unicode symbols** (no JSON, no code block).  
-It should be formatted for a WhatsApp-like dark chat bubble — clear, concise, and NEET-PG exam-oriented.
-
-### Formatting Rules
-- Use Markdown headings:
-  - `#`, `##`, `###` for title / subheading / subsection
-- Use bold (**text**) and italic (_text_)
-- Use lists and numbering for structured points
-- Use Unicode arrows (→, ↑, ↓), subscripts/superscripts (₁, ₂, ³, ⁺, ⁻)
-- Use emojis where relevant (💡 🧠 🩸 ⚕️ 📘)
-- Use line breaks for readability
-- ≤150 words per answer
-- Do **not** explain or describe your format — just reply naturally.
+Guide the student concisely, in Markdown with Unicode symbols, ≤150 words.
+Use headings, **bold**, _italic_, arrows (→, ↑, ↓), subscripts/superscripts (₁, ₂, ³, ⁺, ⁻),
+and emojis (💡🧠⚕️📘) naturally. Do NOT output code blocks or JSON.
 """
 
-        mentor_reply = None
-        gpt_status = "success"
-
+        mentor_reply = "⚠️ Temporary glitch — please retry."
+        gpt_status = "failed"
         try:
             mentor_reply = chat_with_gpt(prompt, convo_log)
-            if not isinstance(mentor_reply, str):
-                mentor_reply = str(mentor_reply)
+            if isinstance(mentor_reply, str):
+                gpt_status = "success"
         except Exception as e:
-            print(f"❌ GPT call failed for student {student_id}: {e}")
-            mentor_reply = "⚠️ I'm having a small technical hiccup 🤖. Please try again soon!"
-            gpt_status = "failed"
+            print(f"❌ GPT call failed: {e}")
 
         convo_log.append({
             "role": "assistant",
@@ -131,20 +111,16 @@ It should be formatted for a WhatsApp-like dark chat bubble — clear, concise, 
             "ts": datetime.utcnow().isoformat() + "Z",
         })
 
-        db_status = "success"
         try:
             supabase.table("student_phase_pointer") \
                 .update({"conversation_log": convo_log}) \
                 .eq("pointer_id", pointer_id) \
                 .execute()
         except Exception as e:
-            db_status = "failed"
-            print(f"⚠️ DB update failed for student {student_id}: {e}")
+            print(f"⚠️ DB update failed: {e}")
 
         return {
             "mentor_reply": mentor_reply,
-            "context_used": True,
-            "db_update_status": db_status,
             "gpt_status": gpt_status,
         }
 
@@ -167,15 +143,48 @@ It should be formatted for a WhatsApp-like dark chat bubble — clear, concise, 
             "react_order_final": rpc_data.get("react_order_final"),
             "phase_type": rpc_data.get("phase_type"),
             "phase_json": rpc_data.get("phase_json"),
-            "mentor_reply": rpc_data.get("mentor_reply")  # for UI use
+            "mentor_reply": rpc_data.get("mentor_reply")
         }
+
+    # ───────────────────────────────
+    # 🔖 4️⃣ BOOKMARK REVIEW FLOW
+    # ───────────────────────────────
+    elif action == "bookmark_review":
+        rpc_data = call_rpc("get_first_bookmark_orchestra", {
+            "p_student_id": student_id,
+            "p_subject_id": subject_id
+        })
+
+        if not rpc_data:
+            print(f"⚠️ No bookmarks found for student {student_id}, subject {subject_id}")
+            return {"bookmarked_concepts": []}
+
+        print(f"✅ First bookmarked concept returned for subject {subject_id}")
+        return {"bookmarked_concepts": [rpc_data]}
+
+    elif action == "bookmark_review_next":
+        last_time = payload.get("bookmark_updated_time")
+        if not last_time:
+            return {"error": "❌ Missing bookmark_updated_time"}
+
+        rpc_data = call_rpc("get_next_bookmark_orchestra", {
+            "p_student_id": student_id,
+            "p_subject_id": subject_id,
+            "p_last_bookmark_time": last_time
+        })
+
+        if not rpc_data:
+            print(f"⚠️ No further bookmarks for student {student_id}, subject {subject_id}")
+            return {"bookmarked_concepts": []}
+
+        return {"bookmarked_concepts": [rpc_data]}
 
     else:
         return {"error": f"Unknown action '{action}'"}
 
 
 # ───────────────────────────────────────────────
-# 🟠 SUBMIT ANSWER — simplified
+# 🟠 SUBMIT ANSWER — MCQ logging
 # ───────────────────────────────────────────────
 @app.post("/submit_answer")
 async def submit_answer(request: Request):
@@ -215,6 +224,9 @@ async def submit_answer(request: Request):
         return {"error": "⚠️ Failed to submit answer", "details": str(e)}
 
 
+# ───────────────────────────────────────────────
+# HOME
+# ───────────────────────────────────────────────
 @app.get("/")
 def home():
-    return {"message": "🧠 Paragraph Orchestra API (subject-aware, optimized) is running successfully!"}
+    return {"message": "🧠 Paragraph Orchestra API (bookmark review ready, no toggle) is live!"}
