@@ -2,13 +2,13 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 from supabase_client import call_rpc, supabase
-from gpt_utils import chat_with_gpt  # ✅ still needed for chat only
+from gpt_utils import chat_with_gpt
 import json
 
 # ───────────────────────────────────────────────
 # Initialize FastAPI app
 # ───────────────────────────────────────────────
-app = FastAPI(title="Paragraph Orchestra API", version="2.0.0")
+app = FastAPI(title="Paragraph Orchestra API", version="2.1.0")
 
 # ✅ Allow frontend (Expo / Web / React) to call this API
 app.add_middleware(
@@ -27,15 +27,19 @@ async def orchestrate(request: Request):
     payload = await request.json()
     action = payload.get("action")
     student_id = payload.get("student_id")
+    subject_id = payload.get("subject_id")  # ✅ NEW PARAM (passed from ChatScreen)
     message = payload.get("message")
 
-    print(f"🎬 Action = {action}, Student = {student_id}")
+    print(f"🎬 Action = {action}, Student = {student_id}, Subject = {subject_id}")
 
     # ───────────────────────────────
     # 🟢 1️⃣ START
     # ───────────────────────────────
     if action == "start":
-        rpc_data = call_rpc("start_orchestra", {"p_student_id": student_id})
+        rpc_data = call_rpc(
+            "start_orchestra",
+            {"p_student_id": student_id, "p_subject_id": subject_id},
+        )
         if not rpc_data:
             return {"error": "❌ start_orchestra RPC failed"}
 
@@ -46,10 +50,11 @@ async def orchestrate(request: Request):
 
         return {
             "student_id": student_id,
+            "subject_id": subject_id,
             "react_order_final": react_order_final,
             "phase_type": phase_type,
             "phase_json": phase_json,
-            "mentor_reply": mentor_reply
+            "mentor_reply": mentor_reply,
         }
 
     # ───────────────────────────────
@@ -64,29 +69,32 @@ async def orchestrate(request: Request):
                 supabase.table("student_phase_pointer")
                 .select("pointer_id, conversation_log")
                 .eq("student_id", student_id)
+                .eq("subject_id", subject_id)  # ✅ NEW FILTER
                 .order("updated_at", desc=True)
                 .limit(1)
                 .execute()
             )
             if not res.data:
-                print(f"⚠️ No pointer found for student {student_id}")
-                return {"error": "⚠️ No active pointer for this student"}
+                print(f"⚠️ No pointer found for student {student_id}, subject {subject_id}")
+                return {"error": "⚠️ No active pointer for this subject"}
 
             pointer = res.data[0]
             pointer_id = pointer["pointer_id"]
             convo_log = pointer.get("conversation_log", [])
-            convo_log.append({
-                "role": "student",
-                "content": message,
-                "ts": datetime.utcnow().isoformat() + "Z"
-            })
+            convo_log.append(
+                {
+                    "role": "student",
+                    "content": message,
+                    "ts": datetime.utcnow().isoformat() + "Z",
+                }
+            )
         except Exception as e:
             print(f"⚠️ Failed to fetch or append student message: {e}")
             return {"error": "❌ Failed to fetch pointer or append message"}
 
-        # ✅ Updated Prompt — Markdown Natural Mentor Reply
+        # ✅ Mentor Prompt — Markdown, Natural NEET-PG Explanation
         prompt = """
-You are a senior NEET-PG mentor with 30 years’ experience. 
+You are a senior NEET-PG mentor with 30 years’ experience.
 You are guiding a medical student preparing for NEET-PG.
 
 You are given the full conversation log — a list of chat objects in the format:
@@ -124,21 +132,20 @@ It should be formatted for a WhatsApp-like dark chat bubble — clear, concise, 
 
         try:
             mentor_reply = chat_with_gpt(prompt, convo_log)
-
-            # ✅ No parsing or stringification — keep raw Markdown string
             if not isinstance(mentor_reply, str):
                 mentor_reply = str(mentor_reply)
-
         except Exception as e:
             print(f"❌ GPT call failed for student {student_id}: {e}")
-            mentor_reply = "⚠️ I'm having a small technical hiccup 🤖. Please try your question again in a bit!"
+            mentor_reply = "⚠️ I'm having a small technical hiccup 🤖. Please try again soon!"
             gpt_status = "failed"
 
-        convo_log.append({
-            "role": "assistant",
-            "content": mentor_reply,
-            "ts": datetime.utcnow().isoformat() + "Z"
-        })
+        convo_log.append(
+            {
+                "role": "assistant",
+                "content": mentor_reply,
+                "ts": datetime.utcnow().isoformat() + "Z",
+            }
+        )
 
         db_status = "success"
         try:
@@ -154,14 +161,17 @@ It should be formatted for a WhatsApp-like dark chat bubble — clear, concise, 
             "mentor_reply": mentor_reply,
             "context_used": True,
             "db_update_status": db_status,
-            "gpt_status": gpt_status
+            "gpt_status": gpt_status,
         }
 
     # ───────────────────────────────
     # 🔵 3️⃣ NEXT — advance to next phase
     # ───────────────────────────────
     elif action == "next":
-        rpc_data = call_rpc("next_orchestra", {"p_student_id": student_id})
+        rpc_data = call_rpc(
+            "next_orchestra",
+            {"p_student_id": student_id, "p_subject_id": subject_id},
+        )
         if not rpc_data:
             return {"error": "❌ next_orchestra RPC failed"}
 
@@ -172,10 +182,11 @@ It should be formatted for a WhatsApp-like dark chat bubble — clear, concise, 
 
         return {
             "student_id": student_id,
+            "subject_id": subject_id,
             "react_order_final": react_order_final,
             "phase_type": phase_type,
             "phase_json": phase_json,
-            "mentor_reply": mentor_reply
+            "mentor_reply": mentor_reply,
         }
 
     else:
@@ -190,6 +201,7 @@ async def submit_answer(request: Request):
     try:
         data = await request.json()
         student_id = data.get("student_id")
+        subject_id = data.get("subject_id")  # ✅ NEW FIELD
         react_order_final = data.get("react_order_final")
         student_answer = data.get("student_answer")
         correct_answer = data.get("correct_answer")
@@ -201,6 +213,7 @@ async def submit_answer(request: Request):
 
         payload = {
             "student_id": student_id,
+            "subject_id": subject_id,  # ✅ ensure linkage
             "react_order_final": int(react_order_final),
             "student_answer": student_answer,
             "correct_answer": correct_answer,
@@ -213,7 +226,7 @@ async def submit_answer(request: Request):
             .upsert(payload, on_conflict=["student_id", "react_order_final"]) \
             .execute()
 
-        print(f"✅ MCQ submission saved → student {student_id}, react_order_final {react_order_final}")
+        print(f"✅ MCQ submission saved → student {student_id}, subject {subject_id}, react_order_final {react_order_final}")
         return {"status": "success", "data": payload}
 
     except Exception as e:
@@ -223,4 +236,4 @@ async def submit_answer(request: Request):
 
 @app.get("/")
 def home():
-    return {"message": "🧠 Paragraph Orchestra API is running successfully!"}
+    return {"message": "🧠 Paragraph Orchestra API (subject-aware) is running successfully!"}
