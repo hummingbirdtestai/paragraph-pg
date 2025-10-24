@@ -53,6 +53,8 @@ async def orchestrate(request: Request):
             "phase_type": rpc_data.get("phase_type"),
             "phase_json": rpc_data.get("phase_json"),
             "mentor_reply": rpc_data.get("mentor_reply"),
+            "seq_num": rpc_data.get("seq_num"),           # ✅ add this
+            "total_count": rpc_data.get("total_count")    # ✅ add this
         }
 
     # ───────────────────────────────
@@ -143,7 +145,9 @@ and emojis (💡🧠⚕️📘) naturally. Do NOT output code blocks or JSON.
             "react_order_final": rpc_data.get("react_order_final"),
             "phase_type": rpc_data.get("phase_type"),
             "phase_json": rpc_data.get("phase_json"),
-            "mentor_reply": rpc_data.get("mentor_reply")
+            "mentor_reply": rpc_data.get("mentor_reply"),
+            "seq_num": rpc_data.get("seq_num"),           # ✅ add this
+            "total_count": rpc_data.get("total_count")  
         }
 
     # ───────────────────────────────
