@@ -167,9 +167,18 @@ and emojis (💡🧠⚕️📘) naturally. Do NOT output code blocks or JSON.
         return {"bookmarked_concepts": [rpc_data]}
 
     elif action == "bookmark_review_next":
-        last_time = payload.get("bookmark_updated_time")
-        if not last_time:
+        last_time_str = payload.get("bookmark_updated_time")
+        if not last_time_str:
             return {"error": "❌ Missing bookmark_updated_time"}
+
+        try:
+            # 🔧 Convert ISO string → Python datetime for proper timestamptz
+            last_time = datetime.fromisoformat(last_time_str.replace("Z", "+00:00"))
+        except Exception as e:
+            print(f"⚠️ Failed to parse bookmark time {last_time_str}: {e}")
+            last_time = None
+
+        print(f"🕒 bookmark_review_next called with time = {last_time}")
 
         rpc_data = call_rpc("get_next_bookmarked_phase", {
             "p_student_id": student_id,
@@ -181,6 +190,7 @@ and emojis (💡🧠⚕️📘) naturally. Do NOT output code blocks or JSON.
             print(f"⚠️ No further bookmarks for student {student_id}, subject {subject_id}")
             return {"bookmarked_concepts": []}
 
+        print(f"✅ RPC returned next bookmark → {rpc_data.get('pointer_id')}")
         return {"bookmarked_concepts": [rpc_data]}
 
     else:
@@ -234,4 +244,3 @@ async def submit_answer(request: Request):
 @app.get("/")
 def home():
     return {"message": "🧠 Paragraph Orchestra API (bookmark review ready, no toggle) is live!"}
-
