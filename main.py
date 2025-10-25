@@ -53,8 +53,8 @@ async def orchestrate(request: Request):
             "phase_type": rpc_data.get("phase_type"),
             "phase_json": rpc_data.get("phase_json"),
             "mentor_reply": rpc_data.get("mentor_reply"),
-            "seq_num": rpc_data.get("seq_num"),           # ✅ add this
-            "total_count": rpc_data.get("total_count")    # ✅ add this
+            "seq_num": rpc_data.get("seq_num"),
+            "total_count": rpc_data.get("total_count")
         }
 
     # ───────────────────────────────
@@ -146,8 +146,8 @@ and emojis (💡🧠⚕️📘) naturally. Do NOT output code blocks or JSON.
             "phase_type": rpc_data.get("phase_type"),
             "phase_json": rpc_data.get("phase_json"),
             "mentor_reply": rpc_data.get("mentor_reply"),
-            "seq_num": rpc_data.get("seq_num"),           # ✅ add this
-            "total_count": rpc_data.get("total_count")  
+            "seq_num": rpc_data.get("seq_num"),
+            "total_count": rpc_data.get("total_count")
         }
 
     # ───────────────────────────────
@@ -172,7 +172,7 @@ and emojis (💡🧠⚕️📘) naturally. Do NOT output code blocks or JSON.
             return {"error": "❌ Missing bookmark_updated_time"}
 
         try:
-            # 🔧 Convert ISO string → Python datetime for proper timestamptz
+            # Parse ISO → datetime
             last_time = datetime.fromisoformat(last_time_str.replace("Z", "+00:00"))
         except Exception as e:
             print(f"⚠️ Failed to parse bookmark time {last_time_str}: {e}")
@@ -180,10 +180,11 @@ and emojis (💡🧠⚕️📘) naturally. Do NOT output code blocks or JSON.
 
         print(f"🕒 bookmark_review_next called with time = {last_time}")
 
+        # ✅ Convert to ISO before sending (fix for JSON serialization)
         rpc_data = call_rpc("get_next_bookmarked_phase", {
             "p_student_id": student_id,
             "p_subject_id": subject_id,
-            "p_last_bookmark_time": last_time
+            "p_last_bookmark_time": last_time.isoformat() if last_time else None
         })
 
         if not rpc_data:
