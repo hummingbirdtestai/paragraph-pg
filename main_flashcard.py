@@ -8,7 +8,7 @@ import json, uuid
 # ───────────────────────────────────────────────
 # Initialize FastAPI app
 # ───────────────────────────────────────────────
-app = FastAPI(title="Flashcard Orchestra API", version="2.2.0")
+app = FastAPI(title="Flashcard Orchestra API", version="2.3.0")
 
 # ✅ Allow frontend (Expo / Web / React) to call this API
 app.add_middleware(
@@ -50,10 +50,11 @@ async def flashcard_orchestrate(request: Request):
     print("═" * 80 + "\n")
 
     # ───────────────────────────────
-    # 🟣 4️⃣ START_BOOKMARKED_REVISION
+    # 🟣 START_BOOKMARKED_REVISION
     # ───────────────────────────────
     if action == "start_bookmarked_revision":
         print("🟣 START_BOOKMARKED_REVISION CALLED")
+
         rpc_data = call_rpc("get_bookmarked_flashcards", {
             "p_student_id": student_id,
             "p_subject_id": subject_id
@@ -61,11 +62,11 @@ async def flashcard_orchestrate(request: Request):
         print(f"📡 RPC get_bookmarked_flashcards returned:\n{json.dumps(rpc_data, indent=2, default=str)}")
 
         if not rpc_data:
-            print("❌ RPC failed or empty response")
             return {"error": "❌ get_bookmarked_flashcards RPC failed"}
 
         safe_data = _make_json_safe(rpc_data)
 
+        # ✅ Always extract a valid flashcard_id
         flashcard_id = safe_data.get("element_id") or safe_data.get("flashcard_json", {}).get("id")
         print(f"🧩 Extracted flashcard_id = {flashcard_id}")
 
@@ -101,11 +102,12 @@ async def flashcard_orchestrate(request: Request):
             "updated_time": safe_data.get("updated_time"),
             "seq_num": safe_data.get("seq_num"),
             "total_count": safe_data.get("total_count"),
+            "flashcard_id": flashcard_id,
             "conversation_log": convo_log
         }
 
     # ───────────────────────────────
-    # 🟠 5️⃣ NEXT_BOOKMARKED_FLASHCARD
+    # 🟠 NEXT_BOOKMARKED_FLASHCARD
     # ───────────────────────────────
     elif action == "next_bookmarked_flashcard":
         print("🟠 NEXT_BOOKMARKED_FLASHCARD CALLED")
@@ -124,6 +126,7 @@ async def flashcard_orchestrate(request: Request):
 
         safe_data = _make_json_safe(rpc_data)
 
+        # ✅ Extract flashcard_id safely
         flashcard_id = safe_data.get("element_id") or safe_data.get("flashcard_json", {}).get("id")
         print(f"🧩 Extracted flashcard_id = {flashcard_id}")
 
@@ -159,29 +162,38 @@ async def flashcard_orchestrate(request: Request):
             "updated_time": safe_data.get("updated_time"),
             "seq_num": safe_data.get("seq_num"),
             "total_count": safe_data.get("total_count"),
+            "flashcard_id": flashcard_id,
             "conversation_log": convo_log
         }
 
     # ───────────────────────────────
-    # 🟣 6️⃣ CHAT_REVIEW_FLASHCARD_BOOKMARKS
+    # 🟣 CHAT_REVIEW_FLASHCARD_BOOKMARKS
     # ───────────────────────────────
     elif action == "chat_review_flashcard_bookmarks":
         print("🟣 CHAT_REVIEW_FLASHCARD_BOOKMARKS CALLED")
+
         subject_id = payload.get("subject_id")
-        flashcard_id = payload.get("flashcard_id")
+        flashcard_id = (
+            payload.get("flashcard_id")
+            or payload.get("element_id")
+            or payload.get("flashcard_json", {}).get("id")
+        )
         flashcard_updated_time = payload.get("flashcard_updated_time")
         message = payload.get("message")
 
+        if not flashcard_id:
+            return {"error": "❌ Missing flashcard_id in payload"}
+
         print(f"💬 Incoming Message: {message}")
-        print(f"🧩 Flashcard ID from payload = {flashcard_id}")
+        print(f"🧩 Flashcard ID resolved = {flashcard_id}")
 
         convo_log, chat_id = [], None
 
-        # ① Fetch existing chat if available
+        # ① Fetch existing chat
         try:
             res = (
                 supabase.table("flashcard_review_bookmarks_chat")
-                .select("id, conversation_log, flashcard_id")
+                .select("id, conversation_log")
                 .eq("student_id", student_id)
                 .eq("flashcard_id", flashcard_id)
                 .order("updated_at", desc=True)
@@ -239,10 +251,6 @@ You are given the full chat log — a list of message objects:
                 }).eq("id", chat_id).execute()
             else:
                 print("🆕 Inserting new chat row...")
-                # ✅ ensure flashcard_id never null before insert
-                flashcard_id = flashcard_id or payload.get("element_id") or payload.get("flashcard_json", {}).get("id")
-                print(f"🧠 FINAL flashcard_id resolved for insert = {flashcard_id}")
-
                 supabase.table("flashcard_review_bookmarks_chat").insert({
                     "student_id": student_id,
                     "subject_id": subject_id,
