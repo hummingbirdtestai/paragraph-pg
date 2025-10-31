@@ -158,6 +158,108 @@ You are given the full flashcard conversation log — a list of chat objects:
         }
 
     # ───────────────────────────────
+    # 🆕 🟣 2️⃣.5️⃣ CHAT_REVIEW_FLASHCARD_BOOKMARK
+    # ───────────────────────────────
+    elif action == "chat_review_flashcard_bookmark":
+        element_id = payload.get("element_id")
+        chat_type = payload.get("type")
+        flashcard_json = payload.get("flashcard_json")
+        concept = payload.get("concept")
+
+        convo_log = []
+        new_entry = False
+        db_status = "success"
+        gpt_status = "success"
+
+        # Step 1 — Check if existing chat exists
+        res = (
+            supabase.table("flashcard_review_bookmarks_chat")
+            .select("id, conversation_log")
+            .eq("student_id", student_id)
+            .eq("flashcard_id", element_id)
+            .order("updated_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+
+        if res.data:
+            convo_log = res.data[0].get("conversation_log", [])
+            chat_id = res.data[0]["id"]
+        else:
+            convo_log = []
+            new_entry = True
+            chat_id = None
+
+        # Step 2 — Append student message
+        convo_log.append({
+            "role": "student",
+            "content": message,
+            "ts": datetime.utcnow().isoformat() + "Z"
+        })
+
+        # Step 3 — Build GPT prompt
+        if chat_type == "flashcard":
+            prompt = f"""
+You are a senior NEET-PG mentor helping a student revise a bookmarked flashcard.
+Flashcard JSON: {json.dumps(flashcard_json, ensure_ascii=False)}
+Reply concisely (≤100 words) using Markdown with Unicode formatting.
+"""
+        else:
+            prompt = f"""
+You are a senior NEET-PG mentor revisiting your earlier mentor explanation.
+Concept: {concept}
+Reply concisely (≤100 words) using Markdown with Unicode formatting.
+"""
+
+        mentor_reply = ""
+        try:
+            mentor_reply = chat_with_gpt(prompt, convo_log)
+            if not isinstance(mentor_reply, str):
+                mentor_reply = str(mentor_reply)
+        except Exception as e:
+            print(f"❌ GPT error: {e}")
+            mentor_reply = "⚠️ I encountered a small glitch 🤖. Please retry."
+            gpt_status = "failed"
+
+        convo_log.append({
+            "role": "assistant",
+            "content": mentor_reply,
+            "ts": datetime.utcnow().isoformat() + "Z"
+        })
+
+        # Step 4 — Insert or Update DB
+        try:
+            if new_entry:
+                supabase.table("flashcard_review_bookmarks_chat").insert({
+                    "student_id": student_id,
+                    "subject_id": subject_id,
+                    "flashcard_id": element_id,
+                    "flashcard_updated_time": datetime.utcnow().isoformat() + "Z",
+                    "conversation_log": convo_log,
+                    "created_at": datetime.utcnow().isoformat() + "Z",
+                    "updated_at": datetime.utcnow().isoformat() + "Z"
+                }).execute()
+            else:
+                supabase.table("flashcard_review_bookmarks_chat") \
+                    .update({
+                        "conversation_log": convo_log,
+                        "updated_at": datetime.utcnow().isoformat() + "Z"
+                    }) \
+                    .eq("id", chat_id) \
+                    .execute()
+        except Exception as e:
+            print(f"⚠️ DB error on flashcard_review_bookmarks_chat: {e}")
+            db_status = "failed"
+
+        return {
+            "mentor_reply": mentor_reply,
+            "conversation_log": convo_log,
+            "new_entry": new_entry,
+            "db_status": db_status,
+            "gpt_status": gpt_status
+        }
+
+    # ───────────────────────────────
     # 🔵 3️⃣ NEXT_FLASHCARD
     # ───────────────────────────────
     elif action == "next_flashcard":
@@ -206,6 +308,17 @@ You are given the full flashcard conversation log — a list of chat objects:
             return {"error": "❌ get_bookmarked_flashcards RPC failed"}
 
         safe_data = _make_json_safe(rpc_data)
+
+        chat_res = (
+            supabase.table("flashcard_review_bookmarks_chat")
+            .select("conversation_log")
+            .eq("student_id", student_id)
+            .eq("flashcard_id", safe_data.get("flashcard_id"))
+            .order("updated_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+
         return {
             "student_id": student_id,
             "subject_id": safe_data.get("subject_id"),
@@ -217,7 +330,8 @@ You are given the full flashcard conversation log — a list of chat objects:
             "concept": safe_data.get("concept"),
             "updated_time": safe_data.get("updated_time"),
             "seq_num": safe_data.get("seq_num"),
-            "total_count": safe_data.get("total_count")
+            "total_count": safe_data.get("total_count"),
+            "conversation_log": chat_res.data[0]["conversation_log"] if chat_res.data else []
         }
 
     # ───────────────────────────────
@@ -235,6 +349,17 @@ You are given the full flashcard conversation log — a list of chat objects:
             return {"error": "❌ get_next_bookmarked_flashcard RPC failed"}
 
         safe_data = _make_json_safe(rpc_data)
+
+        chat_res = (
+            supabase.table("flashcard_review_bookmarks_chat")
+            .select("conversation_log")
+            .eq("student_id", student_id)
+            .eq("flashcard_id", safe_data.get("flashcard_id"))
+            .order("updated_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+
         return {
             "student_id": student_id,
             "subject_id": safe_data.get("subject_id"),
@@ -246,7 +371,8 @@ You are given the full flashcard conversation log — a list of chat objects:
             "concept": safe_data.get("concept"),
             "updated_time": safe_data.get("updated_time"),
             "seq_num": safe_data.get("seq_num"),
-            "total_count": safe_data.get("total_count")
+            "total_count": safe_data.get("total_count"),
+            "conversation_log": chat_res.data[0]["conversation_log"] if chat_res.data else []
         }
 
     else:
