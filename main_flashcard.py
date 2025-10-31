@@ -317,7 +317,7 @@ You are given the full chat log — a list of message objects:
                     "updated_at": datetime.utcnow().isoformat() + "Z"
                 }).eq("id", chat_id).execute()
             else:
-                # 🔄 Auto-fill flashcard_id if missing
+                # 🔄 Auto-fill if flashcard_id is missing
                 if not flashcard_id:
                     try:
                         res = (
