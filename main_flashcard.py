@@ -250,7 +250,7 @@ You are given the full flashcard conversation log — a list of chat objects:
         }
 
     # ───────────────────────────────
-    # 🟣 6️⃣ CHAT_REVIEW_FLASHCARD_BOOKMARKS (UPDATED)
+    # 🟣 6️⃣ CHAT_REVIEW_FLASHCARD_BOOKMARKS (WITH DEBUG LOGS)
     # ───────────────────────────────
     elif action == "chat_review_flashcard_bookmarks":
         subject_id = payload.get("subject_id")
@@ -258,13 +258,19 @@ You are given the full flashcard conversation log — a list of chat objects:
         flashcard_updated_time = payload.get("flashcard_updated_time")
         message = payload.get("message")
 
-        print(f"💬 [Review Flashcard Chat] Student={student_id}, Flashcard={flashcard_id}")
+        print("🟣───────────────────────────────")
+        print(f"💬 [STEP 1] Chat request received for student={student_id}")
+        print(f"📘 Subject ID: {subject_id}")
+        print(f"📘 Flashcard ID: {flashcard_id}")
+        print(f"📘 Updated time: {flashcard_updated_time}")
+        print(f"🗨️ Message: {message}")
+        print("🟣───────────────────────────────")
 
         convo_log = []
         chat_id = None
 
-        # 🧩 Try fetching existing chat
         try:
+            print("🔍 [STEP 2] Checking existing flashcard_review_bookmarks_chat ...")
             res = (
                 supabase.table("flashcard_review_bookmarks_chat")
                 .select("id, conversation_log")
@@ -274,27 +280,31 @@ You are given the full flashcard conversation log — a list of chat objects:
                 .limit(1)
                 .execute()
             )
+            print("📦 Existing chat query result:", res.data)
             if res.data:
                 chat_id = res.data[0]["id"]
                 convo_log = res.data[0].get("conversation_log", [])
-                # ✅ Parse if stringified JSON
+                print(f"✅ Found existing chat (id={chat_id}) with {len(convo_log)} messages")
                 if isinstance(convo_log, str):
                     try:
                         convo_log = json.loads(convo_log)
+                        print("🧩 Parsed convo_log from string successfully.")
                     except Exception as e:
-                        print(f"⚠️ Failed to parse conversation_log JSON: {e}")
+                        print(f"⚠️ JSON parse failed: {e}")
                         convo_log = []
+            else:
+                print("⚠️ No existing chat found.")
         except Exception as e:
-            print(f"⚠️ Fetch existing chat failed: {e}")
+            print(f"❌ Error fetching existing chat: {e}")
 
-        # 🧠 Append student message
+        print("🧠 [STEP 3] Appending student message...")
         convo_log.append({
             "role": "student",
             "content": message,
             "ts": datetime.utcnow().isoformat() + "Z"
         })
+        print(f"🧩 convo_log now has {len(convo_log)} messages after adding student msg.")
 
-        # 🧩 GPT mentor reply
         prompt = """
 You are a senior NEET-PG mentor with 30 years’ experience.
 You are helping a student revise bookmarked flashcards.
@@ -305,7 +315,9 @@ You are given the full chat log — a list of message objects:
 """
         mentor_reply = "⚙️ Thinking..."
         try:
+            print("🤖 [STEP 4] Calling GPT...")
             mentor_reply = chat_with_gpt(prompt, convo_log)
+            print("✅ GPT replied successfully.")
         except Exception as e:
             print(f"❌ GPT failed: {e}")
             mentor_reply = "⚠️ Sorry, I'm facing a technical hiccup 🤖."
@@ -315,16 +327,18 @@ You are given the full chat log — a list of message objects:
             "content": mentor_reply,
             "ts": datetime.utcnow().isoformat() + "Z"
         })
+        print(f"🧩 convo_log now has {len(convo_log)} messages after mentor reply.")
 
-        # 🧩 Insert or update conversation in DB
         try:
             if chat_id:
+                print(f"📝 Updating existing chat id={chat_id} ...")
                 supabase.table("flashcard_review_bookmarks_chat").update({
                     "conversation_log": convo_log,
                     "updated_at": datetime.utcnow().isoformat() + "Z"
                 }).eq("id", chat_id).execute()
+                print("✅ Updated existing chat successfully.")
             else:
-                # 🔄 Auto-fill if flashcard_id is missing
+                print("🆕 No chat found, inserting new one...")
                 if not flashcard_id:
                     try:
                         res = (
@@ -338,7 +352,7 @@ You are given the full chat log — a list of message objects:
                         )
                         if res.data and res.data[0].get("element_id"):
                             flashcard_id = res.data[0]["element_id"]
-                            print(f"🧩 Auto-filled flashcard_id: {flashcard_id}")
+                            print(f"🧩 Auto-filled flashcard_id = {flashcard_id}")
                     except Exception as e:
                         print(f"⚠️ Could not auto-fill flashcard_id: {e}")
 
@@ -349,8 +363,14 @@ You are given the full chat log — a list of message objects:
                     "flashcard_updated_time": flashcard_updated_time,
                     "conversation_log": convo_log
                 }).execute()
+                print("✅ Inserted new chat row successfully.")
         except Exception as e:
-            print(f"⚠️ DB insert/update failed: {e}")
+            print(f"❌ DB insert/update failed: {e}")
+
+        print("📤 [STEP 6] Returning response to frontend...")
+        print(f"🧾 Mentor reply: {mentor_reply}")
+        print(f"🧾 convo_log length: {len(convo_log)}")
+        print("🟣───────────────────────────────")
 
         return {
             "mentor_reply": mentor_reply,
