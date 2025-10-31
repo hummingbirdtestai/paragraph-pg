@@ -50,11 +50,10 @@ async def flashcard_orchestrate(request: Request):
     print("═" * 80 + "\n")
 
     # ───────────────────────────────
-    # 🟣 START_BOOKMARKED_REVISION
+    # 🟣 1️⃣ START_BOOKMARKED_REVISION
     # ───────────────────────────────
     if action == "start_bookmarked_revision":
         print("🟣 START_BOOKMARKED_REVISION CALLED")
-
         rpc_data = call_rpc("get_bookmarked_flashcards", {
             "p_student_id": student_id,
             "p_subject_id": subject_id
@@ -65,9 +64,7 @@ async def flashcard_orchestrate(request: Request):
             return {"error": "❌ get_bookmarked_flashcards RPC failed"}
 
         safe_data = _make_json_safe(rpc_data)
-
-        # ✅ Always extract a valid flashcard_id
-        flashcard_id = safe_data.get("element_id") or safe_data.get("flashcard_json", {}).get("id")
+        flashcard_id = safe_data.get("element_id")
         print(f"🧩 Extracted flashcard_id = {flashcard_id}")
 
         convo_log = []
@@ -75,7 +72,7 @@ async def flashcard_orchestrate(request: Request):
             try:
                 chat_res = (
                     supabase.table("flashcard_review_bookmarks_chat")
-                    .select("id, conversation_log, flashcard_id")
+                    .select("id, conversation_log")
                     .eq("student_id", student_id)
                     .eq("flashcard_id", flashcard_id)
                     .order("updated_at", desc=True)
@@ -102,18 +99,16 @@ async def flashcard_orchestrate(request: Request):
             "updated_time": safe_data.get("updated_time"),
             "seq_num": safe_data.get("seq_num"),
             "total_count": safe_data.get("total_count"),
-            "flashcard_id": flashcard_id,
+            "flashcard_id": flashcard_id,  # ✅ added
             "conversation_log": convo_log
         }
 
     # ───────────────────────────────
-    # 🟠 NEXT_BOOKMARKED_FLASHCARD
+    # 🟠 2️⃣ NEXT_BOOKMARKED_FLASHCARD
     # ───────────────────────────────
     elif action == "next_bookmarked_flashcard":
         print("🟠 NEXT_BOOKMARKED_FLASHCARD CALLED")
         last_updated_time = payload.get("last_updated_time")
-        print(f"⏰ last_updated_time = {last_updated_time}")
-
         rpc_data = call_rpc("get_next_bookmarked_flashcard", {
             "p_student_id": student_id,
             "p_subject_id": subject_id,
@@ -125,9 +120,7 @@ async def flashcard_orchestrate(request: Request):
             return {"error": "❌ get_next_bookmarked_flashcard RPC failed"}
 
         safe_data = _make_json_safe(rpc_data)
-
-        # ✅ Extract flashcard_id safely
-        flashcard_id = safe_data.get("element_id") or safe_data.get("flashcard_json", {}).get("id")
+        flashcard_id = safe_data.get("element_id")
         print(f"🧩 Extracted flashcard_id = {flashcard_id}")
 
         convo_log = []
@@ -135,7 +128,7 @@ async def flashcard_orchestrate(request: Request):
             try:
                 chat_res = (
                     supabase.table("flashcard_review_bookmarks_chat")
-                    .select("id, conversation_log, flashcard_id")
+                    .select("id, conversation_log")
                     .eq("student_id", student_id)
                     .eq("flashcard_id", flashcard_id)
                     .order("updated_at", desc=True)
@@ -162,21 +155,19 @@ async def flashcard_orchestrate(request: Request):
             "updated_time": safe_data.get("updated_time"),
             "seq_num": safe_data.get("seq_num"),
             "total_count": safe_data.get("total_count"),
-            "flashcard_id": flashcard_id,
+            "flashcard_id": flashcard_id,  # ✅ added
             "conversation_log": convo_log
         }
 
     # ───────────────────────────────
-    # 🟣 CHAT_REVIEW_FLASHCARD_BOOKMARKS
+    # 🟣 3️⃣ CHAT_REVIEW_FLASHCARD_BOOKMARKS
     # ───────────────────────────────
     elif action == "chat_review_flashcard_bookmarks":
         print("🟣 CHAT_REVIEW_FLASHCARD_BOOKMARKS CALLED")
-
-        subject_id = payload.get("subject_id")
         flashcard_id = (
-            payload.get("flashcard_id")
-            or payload.get("element_id")
-            or payload.get("flashcard_json", {}).get("id")
+            payload.get("flashcard_id") or
+            payload.get("element_id") or
+            (payload.get("flashcard_json") or {}).get("id")
         )
         flashcard_updated_time = payload.get("flashcard_updated_time")
         message = payload.get("message")
@@ -184,12 +175,9 @@ async def flashcard_orchestrate(request: Request):
         if not flashcard_id:
             return {"error": "❌ Missing flashcard_id in payload"}
 
-        print(f"💬 Incoming Message: {message}")
-        print(f"🧩 Flashcard ID resolved = {flashcard_id}")
-
         convo_log, chat_id = [], None
 
-        # ① Fetch existing chat
+        # ① Fetch existing chat if available
         try:
             res = (
                 supabase.table("flashcard_review_bookmarks_chat")
@@ -200,7 +188,6 @@ async def flashcard_orchestrate(request: Request):
                 .limit(1)
                 .execute()
             )
-            print(f"🔍 Existing chat lookup: {res.data}")
             if res.data:
                 chat_id = res.data[0]["id"]
                 convo_log = res.data[0].get("conversation_log", [])
@@ -209,16 +196,13 @@ async def flashcard_orchestrate(request: Request):
         except Exception as e:
             print(f"⚠️ Chat lookup failed: {e}")
 
-        print(f"🗒️ Current convo_log length before append = {len(convo_log)}")
-
-        # ② Append student message
+        # ② Append new messages
         convo_log.append({
             "role": "student",
             "content": message,
             "ts": datetime.utcnow().isoformat() + "Z"
         })
 
-        # ③ Generate mentor reply
         prompt = """
 You are a senior NEET-PG mentor with 30 years’ experience.
 You are helping a student revise bookmarked flashcards.
@@ -239,12 +223,10 @@ You are given the full chat log — a list of message objects:
             "ts": datetime.utcnow().isoformat() + "Z"
         })
 
-        print(f"✅ Final convo_log length after append = {len(convo_log)}")
-
-        # ④ Insert or update conversation
+        # ③ Save conversation (update or insert)
         try:
             if chat_id:
-                print(f"📝 Updating existing chat (id={chat_id})")
+                print(f"📝 Updating chat id={chat_id}")
                 supabase.table("flashcard_review_bookmarks_chat").update({
                     "conversation_log": convo_log,
                     "updated_at": datetime.utcnow().isoformat() + "Z"
@@ -254,14 +236,12 @@ You are given the full chat log — a list of message objects:
                 supabase.table("flashcard_review_bookmarks_chat").insert({
                     "student_id": student_id,
                     "subject_id": subject_id,
-                    "flashcard_id": flashcard_id,
+                    "flashcard_id": flashcard_id,  # ✅ never null now
                     "flashcard_updated_time": flashcard_updated_time,
                     "conversation_log": convo_log
                 }).execute()
         except Exception as e:
             print(f"⚠️ DB insert/update failed: {e}")
-
-        print("✅ Chat operation completed successfully")
 
         return {
             "mentor_reply": mentor_reply,
@@ -271,8 +251,10 @@ You are given the full chat log — a list of message objects:
             "context_used": True
         }
 
+    # ───────────────────────────────
+    # Default fallback
+    # ───────────────────────────────
     else:
-        print(f"❌ Unknown flashcard action: {action}")
         return {"error": f"Unknown flashcard action '{action}'"}
 
 
