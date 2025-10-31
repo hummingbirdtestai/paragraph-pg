@@ -8,7 +8,7 @@ import json, uuid
 # ───────────────────────────────────────────────
 # Initialize FastAPI app
 # ───────────────────────────────────────────────
-app = FastAPI(title="Flashcard Orchestra API", version="2.4.0")
+app = FastAPI(title="Flashcard Orchestra API", version="2.5.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -154,7 +154,7 @@ You are given the full flashcard conversation log — a list of chat objects:
         }
 
     # ───────────────────────────────
-    # 3️⃣ START_BOOKMARKED_REVISION (✅ updated)
+    # 3️⃣ START_BOOKMARKED_REVISION (✅ fixed)
     # ───────────────────────────────
     elif action == "start_bookmarked_revision":
         rpc_data = call_rpc("get_bookmarked_flashcards", {
@@ -165,10 +165,9 @@ You are given the full flashcard conversation log — a list of chat objects:
             return {"error": "❌ get_bookmarked_flashcards RPC failed"}
 
         safe_data = _make_json_safe(rpc_data)
-        element_id = safe_data.get("element_id")  # 🔗 flashcard_id = element_id
+        element_id = safe_data.get("element_id")  # flashcard_id
         updated_time = safe_data.get("updated_time")
 
-        # ✅ Try to fetch existing chat for this flashcard
         chat_log = []
         try:
             chat_res = (
@@ -176,31 +175,23 @@ You are given the full flashcard conversation log — a list of chat objects:
                 .select("conversation_log")
                 .eq("student_id", student_id)
                 .eq("flashcard_id", element_id)
-                .eq("flashcard_updated_time", updated_time)
+                .order("flashcard_updated_time", desc=True)
                 .limit(1)
                 .execute()
             )
             if chat_res.data and len(chat_res.data) > 0:
                 chat_log = chat_res.data[0].get("conversation_log", [])
         except Exception as e:
-            print(f"⚠️ Could not fetch existing review chat: {e}")
+            print(f"⚠️ Could not fetch review chat: {e}")
 
         return {
+            **safe_data,
             "student_id": student_id,
-            "subject_id": safe_data.get("subject_id"),
-            "subject_name": safe_data.get("subject_name"),
-            "type": safe_data.get("type"),
-            "flashcard_json": safe_data.get("flashcard_json"),
-            "mentor_reply": safe_data.get("mentor_reply"),
-            "concept": safe_data.get("concept"),
-            "updated_time": updated_time,
-            "seq_num": safe_data.get("seq_num"),
-            "total_count": safe_data.get("total_count"),
-            "conversation_log": chat_log  # ✅ merged chat
+            "conversation_log": chat_log
         }
 
     # ───────────────────────────────
-    # 4️⃣ NEXT_BOOKMARKED_FLASHCARD (✅ updated)
+    # 4️⃣ NEXT_BOOKMARKED_FLASHCARD (✅ fixed)
     # ───────────────────────────────
     elif action == "next_bookmarked_flashcard":
         last_updated_time = payload.get("last_updated_time")
@@ -215,7 +206,6 @@ You are given the full flashcard conversation log — a list of chat objects:
 
         safe_data = _make_json_safe(rpc_data)
         element_id = safe_data.get("element_id")
-        updated_time = safe_data.get("updated_time")
 
         chat_log = []
         try:
@@ -224,7 +214,7 @@ You are given the full flashcard conversation log — a list of chat objects:
                 .select("conversation_log")
                 .eq("student_id", student_id)
                 .eq("flashcard_id", element_id)
-                .eq("flashcard_updated_time", updated_time)
+                .order("flashcard_updated_time", desc=True)
                 .limit(1)
                 .execute()
             )
@@ -234,21 +224,13 @@ You are given the full flashcard conversation log — a list of chat objects:
             print(f"⚠️ Could not fetch chat in NEXT: {e}")
 
         return {
+            **safe_data,
             "student_id": student_id,
-            "subject_id": safe_data.get("subject_id"),
-            "subject_name": safe_data.get("subject_name"),
-            "type": safe_data.get("type"),
-            "flashcard_json": safe_data.get("flashcard_json"),
-            "mentor_reply": safe_data.get("mentor_reply"),
-            "concept": safe_data.get("concept"),
-            "updated_time": updated_time,
-            "seq_num": safe_data.get("seq_num"),
-            "total_count": safe_data.get("total_count"),
-            "conversation_log": chat_log  # ✅ merged chat
+            "conversation_log": chat_log
         }
 
     # ───────────────────────────────
-    # 5️⃣ CHAT_REVIEW_FLASHCARD_BOOKMARKS (✅ flashcard_id auto-fill)
+    # 5️⃣ CHAT_REVIEW_FLASHCARD_BOOKMARKS
     # ───────────────────────────────
     elif action == "chat_review_flashcard_bookmarks":
         subject_id = payload.get("subject_id")
@@ -261,13 +243,13 @@ You are given the full flashcard conversation log — a list of chat objects:
         convo_log = []
         chat_id = None
 
-        # 1️⃣ Fetch existing conversation
         try:
             res = (
                 supabase.table("flashcard_review_bookmarks_chat")
                 .select("id, conversation_log")
                 .eq("student_id", student_id)
-                .eq("flashcard_updated_time", flashcard_updated_time)
+                .eq("flashcard_id", flashcard_id)
+                .order("flashcard_updated_time", desc=True)
                 .limit(1)
                 .execute()
             )
@@ -277,14 +259,12 @@ You are given the full flashcard conversation log — a list of chat objects:
         except Exception as e:
             print(f"⚠️ Fetch existing chat failed: {e}")
 
-        # 2️⃣ Append new student message
         convo_log.append({
             "role": "student",
             "content": message,
             "ts": datetime.utcnow().isoformat() + "Z"
         })
 
-        # 3️⃣ GPT mentor reply
         prompt = """
 You are a senior NEET-PG mentor with 30 years’ experience.
 You are helping a student with flashcard-based rapid revision.
@@ -308,7 +288,6 @@ You are given the full flashcard conversation log — a list of chat objects:
             "ts": datetime.utcnow().isoformat() + "Z"
         })
 
-        # 4️⃣ Insert or update DB (auto-fill flashcard_id)
         try:
             if chat_id:
                 supabase.table("flashcard_review_bookmarks_chat").update({
@@ -319,7 +298,7 @@ You are given the full flashcard conversation log — a list of chat objects:
                 supabase.table("flashcard_review_bookmarks_chat").insert({
                     "student_id": student_id,
                     "subject_id": subject_id,
-                    "flashcard_id": flashcard_id,  # ✅ auto from element_id
+                    "flashcard_id": flashcard_id,
                     "flashcard_updated_time": flashcard_updated_time,
                     "conversation_log": convo_log
                 }).execute()
@@ -339,9 +318,6 @@ You are given the full flashcard conversation log — a list of chat objects:
         return {"error": f"Unknown flashcard action '{action}'"}
 
 
-# ───────────────────────────────────────────────
-# Health Check
-# ───────────────────────────────────────────────
 @app.get("/")
 def home():
     return {"message": "🧠 Flashcard Orchestra API is running successfully!"}
