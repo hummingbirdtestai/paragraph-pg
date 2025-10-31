@@ -206,6 +206,26 @@ You are given the full flashcard conversation log — a list of chat objects:
             return {"error": "❌ get_bookmarked_flashcards RPC failed"}
 
         safe_data = _make_json_safe(rpc_data)
+
+        # 🔍 Attach existing conversation if available
+        flashcard_id = safe_data.get("element_id") or safe_data.get("flashcard_json", {}).get("id")
+        convo_log = []
+        if flashcard_id:
+            try:
+                chat_res = (
+                    supabase.table("flashcard_review_bookmarks_chat")
+                    .select("conversation_log")
+                    .eq("student_id", student_id)
+                    .eq("flashcard_id", flashcard_id)
+                    .order("updated_at", desc=True)
+                    .limit(1)
+                    .execute()
+                )
+                if chat_res.data and chat_res.data[0].get("conversation_log"):
+                    convo_log = chat_res.data[0]["conversation_log"]
+            except Exception as e:
+                print(f"⚠️ Could not fetch existing chat: {e}")
+
         return {
             "student_id": student_id,
             "subject_id": safe_data.get("subject_id"),
@@ -217,7 +237,8 @@ You are given the full flashcard conversation log — a list of chat objects:
             "concept": safe_data.get("concept"),
             "updated_time": safe_data.get("updated_time"),
             "seq_num": safe_data.get("seq_num"),
-            "total_count": safe_data.get("total_count")
+            "total_count": safe_data.get("total_count"),
+            "conversation_log": convo_log
         }
 
     # ───────────────────────────────
@@ -235,6 +256,26 @@ You are given the full flashcard conversation log — a list of chat objects:
             return {"error": "❌ get_next_bookmarked_flashcard RPC failed"}
 
         safe_data = _make_json_safe(rpc_data)
+
+        # 🔍 Attach previous chat if exists
+        flashcard_id = safe_data.get("element_id") or safe_data.get("flashcard_json", {}).get("id")
+        convo_log = []
+        if flashcard_id:
+            try:
+                chat_res = (
+                    supabase.table("flashcard_review_bookmarks_chat")
+                    .select("conversation_log")
+                    .eq("student_id", student_id)
+                    .eq("flashcard_id", flashcard_id)
+                    .order("updated_at", desc=True)
+                    .limit(1)
+                    .execute()
+                )
+                if chat_res.data and chat_res.data[0].get("conversation_log"):
+                    convo_log = chat_res.data[0]["conversation_log"]
+            except Exception as e:
+                print(f"⚠️ Could not fetch chat for next card: {e}")
+
         return {
             "student_id": student_id,
             "subject_id": safe_data.get("subject_id"),
@@ -246,11 +287,12 @@ You are given the full flashcard conversation log — a list of chat objects:
             "concept": safe_data.get("concept"),
             "updated_time": safe_data.get("updated_time"),
             "seq_num": safe_data.get("seq_num"),
-            "total_count": safe_data.get("total_count")
+            "total_count": safe_data.get("total_count"),
+            "conversation_log": convo_log
         }
 
     # ───────────────────────────────
-    # 🟣 6️⃣ CHAT_REVIEW_FLASHCARD_BOOKMARKS (WITH DEBUG LOGS)
+    # 🟣 6️⃣ CHAT_REVIEW_FLASHCARD_BOOKMARKS
     # ───────────────────────────────
     elif action == "chat_review_flashcard_bookmarks":
         subject_id = payload.get("subject_id")
@@ -258,53 +300,37 @@ You are given the full flashcard conversation log — a list of chat objects:
         flashcard_updated_time = payload.get("flashcard_updated_time")
         message = payload.get("message")
 
-        print("🟣───────────────────────────────")
-        print(f"💬 [STEP 1] Chat request received for student={student_id}")
-        print(f"📘 Subject ID: {subject_id}")
-        print(f"📘 Flashcard ID: {flashcard_id}")
-        print(f"📘 Updated time: {flashcard_updated_time}")
-        print(f"🗨️ Message: {message}")
-        print("🟣───────────────────────────────")
+        print(f"💬 [Review Chat] Student={student_id}, Flashcard={flashcard_id}")
 
-        convo_log = []
-        chat_id = None
+        convo_log, chat_id = [], None
 
+        # ① Fetch existing chat if available
         try:
-            print("🔍 [STEP 2] Checking existing flashcard_review_bookmarks_chat ...")
             res = (
                 supabase.table("flashcard_review_bookmarks_chat")
                 .select("id, conversation_log")
                 .eq("student_id", student_id)
                 .eq("flashcard_id", flashcard_id)
-                .order("flashcard_updated_time", desc=True)
+                .order("updated_at", desc=True)
                 .limit(1)
                 .execute()
             )
-            print("📦 Existing chat query result:", res.data)
             if res.data:
                 chat_id = res.data[0]["id"]
                 convo_log = res.data[0].get("conversation_log", [])
-                print(f"✅ Found existing chat (id={chat_id}) with {len(convo_log)} messages")
                 if isinstance(convo_log, str):
-                    try:
-                        convo_log = json.loads(convo_log)
-                        print("🧩 Parsed convo_log from string successfully.")
-                    except Exception as e:
-                        print(f"⚠️ JSON parse failed: {e}")
-                        convo_log = []
-            else:
-                print("⚠️ No existing chat found.")
+                    convo_log = json.loads(convo_log)
         except Exception as e:
-            print(f"❌ Error fetching existing chat: {e}")
+            print(f"⚠️ Chat lookup failed: {e}")
 
-        print("🧠 [STEP 3] Appending student message...")
+        # ② Append student message
         convo_log.append({
             "role": "student",
             "content": message,
             "ts": datetime.utcnow().isoformat() + "Z"
         })
-        print(f"🧩 convo_log now has {len(convo_log)} messages after adding student msg.")
 
+        # ③ Generate mentor reply
         prompt = """
 You are a senior NEET-PG mentor with 30 years’ experience.
 You are helping a student revise bookmarked flashcards.
@@ -313,11 +339,8 @@ You are given the full chat log — a list of message objects:
 👉 Reply only to the latest student message.
 🧠 Reply in Markdown using Unicode symbols, ≤100 words, concise and high-yield.
 """
-        mentor_reply = "⚙️ Thinking..."
         try:
-            print("🤖 [STEP 4] Calling GPT...")
             mentor_reply = chat_with_gpt(prompt, convo_log)
-            print("✅ GPT replied successfully.")
         except Exception as e:
             print(f"❌ GPT failed: {e}")
             mentor_reply = "⚠️ Sorry, I'm facing a technical hiccup 🤖."
@@ -327,35 +350,15 @@ You are given the full chat log — a list of message objects:
             "content": mentor_reply,
             "ts": datetime.utcnow().isoformat() + "Z"
         })
-        print(f"🧩 convo_log now has {len(convo_log)} messages after mentor reply.")
 
+        # ④ Insert or update conversation
         try:
             if chat_id:
-                print(f"📝 Updating existing chat id={chat_id} ...")
                 supabase.table("flashcard_review_bookmarks_chat").update({
                     "conversation_log": convo_log,
                     "updated_at": datetime.utcnow().isoformat() + "Z"
                 }).eq("id", chat_id).execute()
-                print("✅ Updated existing chat successfully.")
             else:
-                print("🆕 No chat found, inserting new one...")
-                if not flashcard_id:
-                    try:
-                        res = (
-                            supabase.table("student_flashcard_bookmark")
-                            .select("element_id")
-                            .eq("student_id", student_id)
-                            .eq("subject_id", subject_id)
-                            .order("updated_time", desc=True)
-                            .limit(1)
-                            .execute()
-                        )
-                        if res.data and res.data[0].get("element_id"):
-                            flashcard_id = res.data[0]["element_id"]
-                            print(f"🧩 Auto-filled flashcard_id = {flashcard_id}")
-                    except Exception as e:
-                        print(f"⚠️ Could not auto-fill flashcard_id: {e}")
-
                 supabase.table("flashcard_review_bookmarks_chat").insert({
                     "student_id": student_id,
                     "subject_id": subject_id,
@@ -363,14 +366,8 @@ You are given the full chat log — a list of message objects:
                     "flashcard_updated_time": flashcard_updated_time,
                     "conversation_log": convo_log
                 }).execute()
-                print("✅ Inserted new chat row successfully.")
         except Exception as e:
-            print(f"❌ DB insert/update failed: {e}")
-
-        print("📤 [STEP 6] Returning response to frontend...")
-        print(f"🧾 Mentor reply: {mentor_reply}")
-        print(f"🧾 convo_log length: {len(convo_log)}")
-        print("🟣───────────────────────────────")
+            print(f"⚠️ DB insert/update failed: {e}")
 
         return {
             "mentor_reply": mentor_reply,
