@@ -2,13 +2,14 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta
 from supabase_client import supabase, call_rpc
-from gpt_utils import chat_with_gpt  # ✅ same helper used in /app/orchestrate
+from gpt_utils import chat_with_gpt
 import json
+import traceback
 
 # ───────────────────────────────
 # APP SETUP
 # ───────────────────────────────
-app = FastAPI(title="Mock Test Orchestra API", version="1.4.0")
+app = FastAPI(title="Mock Test Orchestra API", version="1.5.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -73,17 +74,18 @@ async def mocktest_orchestrate(request: Request):
             "p_time_left": str(time_left)
         })
 
-
     # ───────────────────────────────
     # 2️⃣ REVIEW MODE (POST-COMPLETION)
     # ───────────────────────────────
     elif action == "start_review_mocktest":
+        print("🟢 start_review_mocktest triggered")
         return call_rpc("start_review_mocktest", {
             "p_student_id": student_id,
             "p_exam_serial": exam_serial
         })
 
     elif action == "next_review_mocktest":
+        print("🟠 next_review_mocktest triggered")
         return call_rpc("next_review_mocktest", {
             "p_student_id": student_id,
             "p_exam_serial": exam_serial,
@@ -91,24 +93,26 @@ async def mocktest_orchestrate(request: Request):
         })
 
     elif action == "get_review_mocktest_content":
+        print("🔵 get_review_mocktest_content triggered")
         return call_rpc("get_review_mocktest_content", {
             "p_student_id": student_id,
             "p_exam_serial": exam_serial,
             "p_react_order": react_order_final
         })
 
-
     # ───────────────────────────────
     # 3️⃣ CHAT DURING REVIEW (AI MENTOR Q&A)
     # ───────────────────────────────
     elif action == "chat_review_mocktest":
         print("💬 Review Chat Triggered")
+        print(f"📦 Payload keys: {list(payload.keys())}")
+        print(f"📋 mcq_id={mcq_id} | phase_json={phase_json} | message={message}")
 
         if not student_id or not exam_serial or not mcq_id or not message:
             return {"error": "❌ Missing required fields"}
 
         try:
-            # 🔍 Check if existing conversation for same student × test × mcq
+            # 🔍 Step 1: Check if existing chat exists
             res = (
                 supabase.table("mock_test_review_conversation")
                 .select("id, conversation_log, phase_json")
@@ -119,34 +123,34 @@ async def mocktest_orchestrate(request: Request):
                 .execute()
             )
 
+            print("🔍 Existing row query result:", res)
+
             existing = res.data
             convo_log = existing.get("conversation_log", []) if existing else []
 
-            # 🧩 Append student message
+            # 🧩 Step 2: Append student message
             convo_log.append({
                 "role": "student",
                 "content": message,
                 "ts": datetime.utcnow().isoformat() + "Z",
             })
 
-            # ─────────────────────────────────────
-            # 🧠 Extract only the stem from phase_json
-            # ─────────────────────────────────────
+            # 🧠 Step 3: Extract stem only
             stem_text = None
-            if isinstance(phase_json, dict):
-                stem_text = phase_json.get("stem")
-            elif isinstance(phase_json, str):
-                try:
+            try:
+                if isinstance(phase_json, dict):
+                    stem_text = phase_json.get("stem")
+                elif isinstance(phase_json, str):
                     parsed = json.loads(phase_json)
-                    stem_text = parsed.get("stem")
-                except Exception:
-                    stem_text = phase_json
-
+                    stem_text = parsed.get("stem", phase_json)
+                else:
+                    stem_text = str(phase_json)
+            except Exception as e:
+                print("⚠️ Stem parse error:", e)
+                stem_text = str(phase_json)
             phase_stub = {"stem": stem_text}
 
-            # ─────────────────────────────────────
-            # 🧠 Build GPT prompt
-            # ─────────────────────────────────────
+            # 🧠 Step 4: Build GPT prompt
             if existing is None:
                 prompt = f"""
 You are a senior NEET-PG mentor with 30 years' experience.
@@ -161,50 +165,71 @@ You are continuing a NEET-PG review discussion.
 Reply concisely (≤120 words) with a friendly mentor tone and Unicode formatting.
 """
 
+            # 🧠 Step 5: Call GPT safely
             mentor_reply = "⚠️ Please retry later."
             try:
+                print("🤖 Calling GPT ...")
                 mentor_reply = chat_with_gpt(prompt, convo_log)
+                print("✅ GPT reply:", mentor_reply[:100])
             except Exception as e:
-                print(f"❌ GPT call failed: {e}")
+                print("❌ GPT call failed:", e)
+                print(traceback.format_exc())
 
-            # 🗨️ Append mentor reply
+            # Append mentor message
             convo_log.append({
                 "role": "mentor",
                 "content": mentor_reply,
                 "ts": datetime.utcnow().isoformat() + "Z",
             })
 
-            # ─────────────────────────────────────
-            # 💾 Save to Supabase (insert/update)
-            # ─────────────────────────────────────
+            # 🧾 Step 6: Insert or Update Supabase
+            print("🪶 Preparing to insert/update in Supabase...")
             if existing is None:
-                supabase.table("mock_test_review_conversation").insert({
-                    "student_id": student_id,
-                    "exam_serial": exam_serial,
-                    "mcq_id": mcq_id,
-                    "phase_json": json.dumps(phase_stub),      # ✅ only stem
-                    "react_order": react_order,
-                    "conversation_log": json.dumps(convo_log), # ✅ serialize JSON
-                    "created_at": datetime.utcnow().isoformat() + "Z",
-                }).execute()
+                try:
+                    insert_data = {
+                        "student_id": student_id,
+                        "exam_serial": exam_serial,
+                        "mcq_id": mcq_id,
+                        "phase_json": json.dumps(phase_stub),
+                        "react_order": react_order,
+                        "conversation_log": json.dumps(convo_log),
+                        "created_at": datetime.utcnow().isoformat() + "Z",
+                    }
+                    print("📦 Insert data:", insert_data)
+                    res = supabase.table("mock_test_review_conversation").insert(insert_data).execute()
+                    print("✅ Insert result:", res)
+                except Exception as e:
+                    print("❌ Supabase insert error:", e)
+                    print(traceback.format_exc())
             else:
-                supabase.table("mock_test_review_conversation").update({
-                    "conversation_log": json.dumps(convo_log),
-                    "updated_at": datetime.utcnow().isoformat() + "Z"
-                }).eq("id", existing["id"]).execute()
+                try:
+                    update_data = {
+                        "conversation_log": json.dumps(convo_log),
+                        "updated_at": datetime.utcnow().isoformat() + "Z",
+                    }
+                    print("📦 Update data:", update_data)
+                    res = (
+                        supabase.table("mock_test_review_conversation")
+                        .update(update_data)
+                        .eq("id", existing["id"])
+                        .execute()
+                    )
+                    print("✅ Update result:", res)
+                except Exception as e:
+                    print("❌ Supabase update error:", e)
+                    print(traceback.format_exc())
 
-            print(f"🧾 Stored review chat for MCQ {mcq_id}: {stem_text}")
+            print(f"🧾 Stored review chat for MCQ={mcq_id}, stem='{stem_text}'")
 
-            # ✅ Return mentor reply & conversation history
             return {
                 "mentor_reply": mentor_reply,
                 "conversation_log": convo_log
             }
 
         except Exception as e:
-            print(f"❌ Review chat error: {e}")
+            print("❌ Review chat block crashed:", e)
+            print(traceback.format_exc())
             return {"error": str(e)}
-
 
     # ───────────────────────────────
     # FALLBACK
@@ -214,11 +239,11 @@ Reply concisely (≤120 words) with a friendly mentor tone and Unicode formattin
 
 
 # ───────────────────────────────
-# HEALTH CHECK ROUTE
+# HEALTH CHECK
 # ───────────────────────────────
 @app.get("/")
 def home():
     return {
-        "message": "🧠 Mock Test Orchestra API is live with Review Mode + AI Mentor Chat (Stem-Only Optimized)!",
-        "version": "1.4.0",
+        "message": "🧠 Mock Test Orchestra API v1.5.0 (debug mode, review chat tracing active)",
+        "status": "ok"
     }
