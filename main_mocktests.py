@@ -1,14 +1,14 @@
-# /app/main_mocktest.py
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta
 from supabase_client import supabase, call_rpc
-from gpt_utils import chat_with_gpt  # ✅ Reuse same helper used in /app/orchestrate
+from gpt_utils import chat_with_gpt  # ✅ same helper used in /app/orchestrate
+import json
 
 # ───────────────────────────────
 # APP SETUP
 # ───────────────────────────────
-app = FastAPI(title="Mock Test Orchestra API", version="1.3.0")
+app = FastAPI(title="Mock Test Orchestra API", version="1.4.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -104,12 +104,11 @@ async def mocktest_orchestrate(request: Request):
     elif action == "chat_review_mocktest":
         print("💬 Review Chat Triggered")
 
-        # Basic validation
         if not student_id or not exam_serial or not mcq_id or not message:
             return {"error": "❌ Missing required fields"}
 
         try:
-            # Check if chat exists for this student × test × MCQ
+            # 🔍 Check if existing conversation for same student × test × mcq
             res = (
                 supabase.table("mock_test_review_conversation")
                 .select("id, conversation_log, phase_json")
@@ -123,63 +122,80 @@ async def mocktest_orchestrate(request: Request):
             existing = res.data
             convo_log = existing.get("conversation_log", []) if existing else []
 
-            # Append student message
+            # 🧩 Append student message
             convo_log.append({
                 "role": "student",
                 "content": message,
                 "ts": datetime.utcnow().isoformat() + "Z",
             })
 
-            # Build GPT prompt
+            # ─────────────────────────────────────
+            # 🧠 Extract only the stem from phase_json
+            # ─────────────────────────────────────
+            stem_text = None
+            if isinstance(phase_json, dict):
+                stem_text = phase_json.get("stem")
+            elif isinstance(phase_json, str):
+                try:
+                    parsed = json.loads(phase_json)
+                    stem_text = parsed.get("stem")
+                except Exception:
+                    stem_text = phase_json
+
+            phase_stub = {"stem": stem_text}
+
+            # ─────────────────────────────────────
+            # 🧠 Build GPT prompt
+            # ─────────────────────────────────────
             if existing is None:
-                # First time → use MCQ stem + student's question
-                stem = (phase_json or {}).get("stem", "Unknown question stem")
                 prompt = f"""
 You are a senior NEET-PG mentor with 30 years' experience.
-Explain the answer concept in ≤120 words, with Unicode markup and emojis naturally.
+Explain the concept behind the answer in ≤120 words, using Unicode markup and emojis naturally.
 
-MCQ Stem: {stem}
+MCQ Stem: {stem_text}
 Student's question: {message}
 """
             else:
-                # Continuing existing chat
                 prompt = """
 You are continuing a NEET-PG review discussion.
-Reply concisely (≤120 words) with friendly mentor tone and Unicode formatting.
+Reply concisely (≤120 words) with a friendly mentor tone and Unicode formatting.
 """
 
-            # Call GPT model
             mentor_reply = "⚠️ Please retry later."
             try:
                 mentor_reply = chat_with_gpt(prompt, convo_log)
             except Exception as e:
                 print(f"❌ GPT call failed: {e}")
 
-            # Append mentor’s reply
+            # 🗨️ Append mentor reply
             convo_log.append({
                 "role": "mentor",
                 "content": mentor_reply,
                 "ts": datetime.utcnow().isoformat() + "Z",
             })
 
-            # Save to Supabase (insert or update)
+            # ─────────────────────────────────────
+            # 💾 Save to Supabase (insert/update)
+            # ─────────────────────────────────────
             if existing is None:
                 supabase.table("mock_test_review_conversation").insert({
                     "student_id": student_id,
                     "exam_serial": exam_serial,
                     "mcq_id": mcq_id,
-                    "phase_json": phase_json,
+                    "phase_json": json.dumps(phase_stub),      # ✅ only stem
                     "react_order": react_order,
-                    "conversation_log": convo_log,
+                    "conversation_log": json.dumps(convo_log), # ✅ serialize JSON
                     "created_at": datetime.utcnow().isoformat() + "Z",
                 }).execute()
             else:
                 supabase.table("mock_test_review_conversation").update({
-                    "conversation_log": convo_log,
+                    "conversation_log": json.dumps(convo_log),
                     "updated_at": datetime.utcnow().isoformat() + "Z"
                 }).eq("id", existing["id"]).execute()
 
-            # Return mentor reply and updated convo log
+            print(f"🧾 Stored review chat for MCQ {mcq_id}: {stem_text}")
+
+            # ✅ Return mentor reply & conversation history
             return {
                 "mentor_reply": mentor_reply,
                 "conversation_log": convo_log
@@ -203,5 +219,6 @@ Reply concisely (≤120 words) with friendly mentor tone and Unicode formatting.
 @app.get("/")
 def home():
     return {
-        "message": "🧠 Mock Test Orchestra API is live with Review Mode + AI Mentor Chat!"
+        "message": "🧠 Mock Test Orchestra API is live with Review Mode + AI Mentor Chat (Stem-Only Optimized)!",
+        "version": "1.4.0",
     }
