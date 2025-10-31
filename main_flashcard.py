@@ -243,7 +243,7 @@ You are given the full chat log — a list of message objects:
                 supabase.table("flashcard_review_bookmarks_chat").insert({
                     "student_id": student_id,
                     "subject_id": subject_id,
-                    "flashcard_id": flashcard_id or payload.get("element_id"),
+                    flashcard_id = flashcard_id or payload.get("element_id") or payload.get("flashcard_json", {}).get("id")
                     "flashcard_updated_time": flashcard_updated_time,
                     "conversation_log": convo_log
                 }).execute()
