@@ -3,12 +3,12 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta
 from supabase_client import supabase, call_rpc
-from gpt_client import chat_with_gpt  # assumes same helper used earlier
+from gpt_utils import chat_with_gpt  # ✅ Reuse same helper used in /app/orchestrate
 
 # ───────────────────────────────
 # APP SETUP
 # ───────────────────────────────
-app = FastAPI(title="Mock Test Orchestra API", version="1.2.0")
+app = FastAPI(title="Mock Test Orchestra API", version="1.3.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -17,6 +17,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # ───────────────────────────────
 # MAIN ORCHESTRATOR ENDPOINT
@@ -36,6 +37,7 @@ async def mocktest_orchestrate(request: Request):
     react_order = payload.get("react_order")
     time_left_str = payload.get("time_left", "03:30:00")
 
+    # Safely parse time string
     try:
         h, m, s = map(int, time_left_str.split(":"))
         time_left = timedelta(hours=h, minutes=m, seconds=s)
@@ -71,6 +73,7 @@ async def mocktest_orchestrate(request: Request):
             "p_time_left": str(time_left)
         })
 
+
     # ───────────────────────────────
     # 2️⃣ REVIEW MODE (POST-COMPLETION)
     # ───────────────────────────────
@@ -94,16 +97,19 @@ async def mocktest_orchestrate(request: Request):
             "p_react_order": react_order_final
         })
 
+
     # ───────────────────────────────
-    # 3️⃣ CHAT DURING REVIEW (NEW)
+    # 3️⃣ CHAT DURING REVIEW (AI MENTOR Q&A)
     # ───────────────────────────────
     elif action == "chat_review_mocktest":
         print("💬 Review Chat Triggered")
 
+        # Basic validation
         if not student_id or not exam_serial or not mcq_id or not message:
-            return {"error": "Missing required fields"}
+            return {"error": "❌ Missing required fields"}
 
         try:
+            # Check if chat exists for this student × test × MCQ
             res = (
                 supabase.table("mock_test_review_conversation")
                 .select("id, conversation_log, phase_json")
@@ -117,44 +123,46 @@ async def mocktest_orchestrate(request: Request):
             existing = res.data
             convo_log = existing.get("conversation_log", []) if existing else []
 
-            # append student message
+            # Append student message
             convo_log.append({
                 "role": "student",
                 "content": message,
                 "ts": datetime.utcnow().isoformat() + "Z",
             })
 
-            # build prompt
+            # Build GPT prompt
             if existing is None:
-                # first time review chat → use MCQ stem + question
-                stem = phase_json.get("stem") if phase_json else "Unknown question stem"
+                # First time → use MCQ stem + student's question
+                stem = (phase_json or {}).get("stem", "Unknown question stem")
                 prompt = f"""
 You are a senior NEET-PG mentor with 30 years' experience.
-Explain in ≤120 words, with Unicode markup and emojis naturally.
+Explain the answer concept in ≤120 words, with Unicode markup and emojis naturally.
 
 MCQ Stem: {stem}
 Student's question: {message}
 """
             else:
-                # existing chat → continue context
+                # Continuing existing chat
                 prompt = """
 You are continuing a NEET-PG review discussion.
-Keep replies concise, <=120 words, friendly mentor tone.
+Reply concisely (≤120 words) with friendly mentor tone and Unicode formatting.
 """
-            
+
+            # Call GPT model
             mentor_reply = "⚠️ Please retry later."
             try:
                 mentor_reply = chat_with_gpt(prompt, convo_log)
             except Exception as e:
-                print(f"GPT call failed: {e}")
+                print(f"❌ GPT call failed: {e}")
 
+            # Append mentor’s reply
             convo_log.append({
                 "role": "mentor",
                 "content": mentor_reply,
                 "ts": datetime.utcnow().isoformat() + "Z",
             })
 
-            # insert or update DB
+            # Save to Supabase (insert or update)
             if existing is None:
                 supabase.table("mock_test_review_conversation").insert({
                     "student_id": student_id,
@@ -162,7 +170,8 @@ Keep replies concise, <=120 words, friendly mentor tone.
                     "mcq_id": mcq_id,
                     "phase_json": phase_json,
                     "react_order": react_order,
-                    "conversation_log": convo_log
+                    "conversation_log": convo_log,
+                    "created_at": datetime.utcnow().isoformat() + "Z",
                 }).execute()
             else:
                 supabase.table("mock_test_review_conversation").update({
@@ -170,6 +179,7 @@ Keep replies concise, <=120 words, friendly mentor tone.
                     "updated_at": datetime.utcnow().isoformat() + "Z"
                 }).eq("id", existing["id"]).execute()
 
+            # Return mentor reply and updated convo log
             return {
                 "mentor_reply": mentor_reply,
                 "conversation_log": convo_log
@@ -179,6 +189,7 @@ Keep replies concise, <=120 words, friendly mentor tone.
             print(f"❌ Review chat error: {e}")
             return {"error": str(e)}
 
+
     # ───────────────────────────────
     # FALLBACK
     # ───────────────────────────────
@@ -186,6 +197,11 @@ Keep replies concise, <=120 words, friendly mentor tone.
         return {"error": f"❌ Unknown intent '{action}'"}
 
 
+# ───────────────────────────────
+# HEALTH CHECK ROUTE
+# ───────────────────────────────
 @app.get("/")
 def home():
-    return {"message": "🧠 Mock Test Orchestra API is live with Review Mode + Review Chat!"}
+    return {
+        "message": "🧠 Mock Test Orchestra API is live with Review Mode + AI Mentor Chat!"
+    }
