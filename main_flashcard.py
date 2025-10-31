@@ -250,7 +250,7 @@ You are given the full flashcard conversation log — a list of chat objects:
         }
 
     # ───────────────────────────────
-    # 🟣 6️⃣ CHAT_REVIEW_FLASHCARD_BOOKMARKS (NEW)
+    # 🟣 6️⃣ CHAT_REVIEW_FLASHCARD_BOOKMARKS (UPDATED)
     # ───────────────────────────────
     elif action == "chat_review_flashcard_bookmarks":
         subject_id = payload.get("subject_id")
@@ -277,6 +277,13 @@ You are given the full flashcard conversation log — a list of chat objects:
             if res.data:
                 chat_id = res.data[0]["id"]
                 convo_log = res.data[0].get("conversation_log", [])
+                # ✅ Parse if stringified JSON
+                if isinstance(convo_log, str):
+                    try:
+                        convo_log = json.loads(convo_log)
+                    except Exception as e:
+                        print(f"⚠️ Failed to parse conversation_log JSON: {e}")
+                        convo_log = []
         except Exception as e:
             print(f"⚠️ Fetch existing chat failed: {e}")
 
@@ -349,6 +356,7 @@ You are given the full chat log — a list of message objects:
             "mentor_reply": mentor_reply,
             "student_id": student_id,
             "flashcard_id": flashcard_id,
+            "conversation_log": convo_log,
             "context_used": True
         }
 
