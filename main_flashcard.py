@@ -249,6 +249,106 @@ You are given the full flashcard conversation log — a list of chat objects:
             "total_count": safe_data.get("total_count")
         }
 
+    # ───────────────────────────────
+    # 🟣 6️⃣ CHAT_REVIEW_FLASHCARD_BOOKMARKS
+    # ───────────────────────────────
+    elif action == "chat_review_flashcard_bookmarks":
+        subject_id = payload.get("subject_id")
+        flashcard_id = payload.get("flashcard_id")
+        flashcard_updated_time = payload.get("flashcard_updated_time")
+        message = payload.get("message")
+
+        print(f"💬 [Review Flashcard Chat] Student={student_id}, Flashcard={flashcard_id}")
+
+        convo_log = []
+        chat_id = None
+
+        # 1️⃣ Try to get existing conversation
+        try:
+            res = (
+                supabase.table("flashcard_review_bookmarks_chat")
+                .select("id, conversation_log")
+                .eq("student_id", student_id)
+                .eq("flashcard_updated_time", flashcard_updated_time)
+                .order("updated_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            if res.data:
+                chat_id = res.data[0]["id"]
+                convo_log = res.data[0].get("conversation_log", [])
+        except Exception as e:
+            print(f"⚠️ Failed to fetch existing review chat: {e}")
+
+        # 2️⃣ Append student message
+        convo_log.append({
+            "role": "student",
+            "content": message,
+            "ts": datetime.utcnow().isoformat() + "Z"
+        })
+
+        # 3️⃣ Use the same NEET-PG mentor prompt
+        prompt = """
+You are a senior NEET-PG mentor with 30 years’ experience.
+You are helping a student with flashcard-based rapid revision.
+You are given the full flashcard conversation log — a list of chat objects:
+[{ "role": "mentor" | "student", "content": "..." }]
+👉 Reply only to the latest student message.
+🧠 Reply in Markdown using Unicode symbols, ≤100 words, concise and high-yield.
+"""
+
+        mentor_reply = None
+        gpt_status = "success"
+
+        # 4️⃣ Generate GPT reply
+        try:
+            mentor_reply = chat_with_gpt(prompt, convo_log)
+            if not isinstance(mentor_reply, str):
+                mentor_reply = str(mentor_reply)
+        except Exception as e:
+            print(f"❌ GPT failed in chat_review_flashcard_bookmarks: {e}")
+            mentor_reply = "⚠️ Sorry, I'm having a small technical hiccup 🤖. Please try again soon!"
+            gpt_status = "failed"
+
+        # 5️⃣ Append mentor reply
+        convo_log.append({
+            "role": "assistant",
+            "content": mentor_reply,
+            "ts": datetime.utcnow().isoformat() + "Z"
+        })
+
+        # 6️⃣ Insert or update the chat row
+        try:
+            if chat_id:
+                supabase.table("flashcard_review_bookmarks_chat") \
+                    .update({
+                        "conversation_log": convo_log,
+                        "updated_at": datetime.utcnow().isoformat() + "Z"
+                    }) \
+                    .eq("id", chat_id) \
+                    .execute()
+            else:
+                supabase.table("flashcard_review_bookmarks_chat") \
+                    .insert({
+                        "student_id": student_id,
+                        "subject_id": subject_id,
+                        "flashcard_id": flashcard_id,
+                        "flashcard_updated_time": flashcard_updated_time,
+                        "conversation_log": convo_log
+                    }) \
+                    .execute()
+        except Exception as e:
+            print(f"⚠️ DB insert/update failed for review chat: {e}")
+
+        # 7️⃣ Return mentor reply
+        return {
+            "mentor_reply": mentor_reply,
+            "gpt_status": gpt_status,
+            "student_id": student_id,
+            "flashcard_updated_time": flashcard_updated_time,
+            "context_used": True
+        }
+
     else:
         return {"error": f"Unknown flashcard action '{action}'"}
 
