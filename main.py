@@ -194,6 +194,7 @@ and emojis (💡🧠⚕️📘) naturally. Do NOT output code blocks or JSON.
     elif action == "bookmark_review_chat":
         phase_type = payload.get("phase_type", "concept")
         bookmark_updated_time = payload.get("bookmark_updated_time")
+        phase_json = payload.get("phase_json")  # ✅ capture from frontend
 
         print(f"💬 bookmark_review_chat → phase_type={phase_type}, time={bookmark_updated_time}")
 
@@ -223,6 +224,7 @@ and emojis (💡🧠⚕️📘) naturally. Do NOT output code blocks or JSON.
                         "student_id": student_id,
                         "subject_id": subject_id,
                         "phase_type": phase_type,
+                        "phase_json": phase_json,  # ✅ added here
                         "conversation_log": [],
                         "created_at": datetime.utcnow().isoformat() + "Z",
                     })
@@ -232,6 +234,11 @@ and emojis (💡🧠⚕️📘) naturally. Do NOT output code blocks or JSON.
         except Exception as e:
             print(f"⚠️ DB fetch/insert failed: {e}")
             return {"error": "DB fetch failed"}
+
+        # ✅ If no message provided → just return existing conversation
+        if not message:
+            print("ℹ️ No message → returning existing conversation only")
+            return {"existing_conversation": convo_log}
 
         # 2️⃣ Append student message
         convo_log.append({
