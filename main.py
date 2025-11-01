@@ -8,7 +8,7 @@ import json
 # ───────────────────────────────────────────────
 # Initialize FastAPI app
 # ───────────────────────────────────────────────
-app = FastAPI(title="Paragraph Orchestra API", version="2.3.1")
+app = FastAPI(title="Paragraph Orchestra API", version="2.4.0")
 
 # ✅ Allow frontend (Expo / Web / React) to call this API
 app.add_middleware(
@@ -18,7 +18,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # ───────────────────────────────────────────────
 # Master Endpoint — handles all actions
@@ -34,14 +33,13 @@ async def orchestrate(request: Request):
     print(f"🎬 Action = {action}, Student = {student_id}, Subject = {subject_id}")
 
     # ───────────────────────────────
-    # 🟢 1️⃣ START
+    # 🟢 1️⃣ START (chapter flow)
     # ───────────────────────────────
     if action == "start":
         rpc_data = call_rpc("start_orchestra", {
             "p_student_id": student_id,
             "p_subject_id": subject_id
         })
-
         if not rpc_data or "phase_type" not in rpc_data:
             print(f"⚠️ RPC failed or returned empty → {rpc_data}")
             return {"error": "❌ start_orchestra RPC failed"}
@@ -54,11 +52,11 @@ async def orchestrate(request: Request):
             "phase_json": rpc_data.get("phase_json"),
             "mentor_reply": rpc_data.get("mentor_reply"),
             "seq_num": rpc_data.get("seq_num"),
-            "total_count": rpc_data.get("total_count")
+            "total_count": rpc_data.get("total_count"),
         }
 
     # ───────────────────────────────
-    # 🟡 2️⃣ CHAT — CONTEXTUAL GPT REPLY
+    # 🟡 2️⃣ CHAT — main chapter chat
     # ───────────────────────────────
     elif action == "chat":
         pointer_id = None
@@ -147,16 +145,16 @@ and emojis (💡🧠⚕️📘) naturally. Do NOT output code blocks or JSON.
             "phase_json": rpc_data.get("phase_json"),
             "mentor_reply": rpc_data.get("mentor_reply"),
             "seq_num": rpc_data.get("seq_num"),
-            "total_count": rpc_data.get("total_count")
+            "total_count": rpc_data.get("total_count"),
         }
 
     # ───────────────────────────────
-    # 🔖 4️⃣ BOOKMARK REVIEW FLOW
+    # 🔖 4️⃣ BOOKMARK REVIEW FLOW (concepts)
     # ───────────────────────────────
     elif action == "bookmark_review":
         rpc_data = call_rpc("get_first_bookmarked_phase", {
             "p_student_id": student_id,
-            "p_subject_id": subject_id
+            "p_subject_id": subject_id,
         })
 
         if not rpc_data:
@@ -172,19 +170,15 @@ and emojis (💡🧠⚕️📘) naturally. Do NOT output code blocks or JSON.
             return {"error": "❌ Missing bookmark_updated_time"}
 
         try:
-            # Parse ISO → datetime
             last_time = datetime.fromisoformat(last_time_str.replace("Z", "+00:00"))
         except Exception as e:
             print(f"⚠️ Failed to parse bookmark time {last_time_str}: {e}")
             last_time = None
 
-        print(f"🕒 bookmark_review_next called with time = {last_time}")
-
-        # ✅ Convert to ISO before sending (fix for JSON serialization)
         rpc_data = call_rpc("get_next_bookmarked_phase", {
             "p_student_id": student_id,
             "p_subject_id": subject_id,
-            "p_last_bookmark_time": last_time.isoformat() if last_time else None
+            "p_last_bookmark_time": last_time.isoformat() if last_time else None,
         })
 
         if not rpc_data:
@@ -194,6 +188,104 @@ and emojis (💡🧠⚕️📘) naturally. Do NOT output code blocks or JSON.
         print(f"✅ RPC returned next bookmark → {rpc_data.get('pointer_id')}")
         return {"bookmarked_concepts": [rpc_data]}
 
+    # ───────────────────────────────
+    # 🟣 5️⃣ BOOKMARK REVIEW CHAT — GPT chat during bookmarked concept review
+    # ───────────────────────────────
+    elif action == "bookmark_review_chat":
+        phase_type = payload.get("phase_type", "concept")
+        bookmark_updated_time = payload.get("bookmark_updated_time")
+
+        print(f"💬 bookmark_review_chat → phase_type={phase_type}, time={bookmark_updated_time}")
+
+        # 1️⃣ Get last conversation for this student/subject
+        convo_log = []
+        try:
+            res = (
+                supabase.table("concept_review_bookmarks_chat")
+                .select("id, conversation_log")
+                .eq("student_id", student_id)
+                .eq("subject_id", subject_id)
+                .eq("phase_type", phase_type)
+                .order("updated_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+
+            if res.data:
+                chat_row = res.data[0]
+                chat_id = chat_row["id"]
+                convo_log = chat_row.get("conversation_log", [])
+            else:
+                # New chat row if none exists
+                insert_res = (
+                    supabase.table("concept_review_bookmarks_chat")
+                    .insert({
+                        "student_id": student_id,
+                        "subject_id": subject_id,
+                        "phase_type": phase_type,
+                        "conversation_log": [],
+                        "created_at": datetime.utcnow().isoformat() + "Z",
+                    })
+                    .execute()
+                )
+                chat_id = insert_res.data[0]["id"] if insert_res.data else None
+        except Exception as e:
+            print(f"⚠️ DB fetch/insert failed: {e}")
+            return {"error": "DB fetch failed"}
+
+        # 2️⃣ Append student message
+        convo_log.append({
+            "role": "student",
+            "content": message,
+            "ts": datetime.utcnow().isoformat() + "Z",
+        })
+
+        # 3️⃣ Generate mentor reply via GPT
+        prompt = """
+You are a senior NEET-PG mentor with 30 years’ experience.
+Guide the student concisely, in Markdown with Unicode symbols, ≤150 words.
+Use headings, **bold**, _italic_, arrows (→, ↑, ↓), subscripts/superscripts (₁, ₂, ³, ⁺, ⁻),
+and emojis (💡🧠⚕️📘) naturally. Do NOT output code blocks or JSON.
+"""
+
+        mentor_reply = "⚠️ Temporary glitch — please retry."
+        gpt_status = "failed"
+        try:
+            mentor_reply = chat_with_gpt(prompt, convo_log)
+            if isinstance(mentor_reply, str):
+                gpt_status = "success"
+        except Exception as e:
+            print(f"❌ GPT call failed: {e}")
+
+        convo_log.append({
+            "role": "assistant",
+            "content": mentor_reply,
+            "ts": datetime.utcnow().isoformat() + "Z",
+        })
+
+        # 4️⃣ Update the conversation_log back into table
+        try:
+            supabase.table("concept_review_bookmarks_chat") \
+                .update({
+                    "conversation_log": convo_log,
+                    "updated_at": datetime.utcnow().isoformat() + "Z",
+                }) \
+                .eq("student_id", student_id) \
+                .eq("subject_id", subject_id) \
+                .eq("phase_type", phase_type) \
+                .execute()
+        except Exception as e:
+            print(f"⚠️ DB update failed: {e}")
+
+        # 5️⃣ Return GPT reply to frontend
+        return {
+            "mentor_reply": mentor_reply,
+            "gpt_status": gpt_status,
+        }
+
+    # ───────────────────────────────
+    # ❌ Unknown action
+    # ───────────────────────────────
     else:
         return {"error": f"Unknown action '{action}'"}
 
@@ -244,4 +336,4 @@ async def submit_answer(request: Request):
 # ───────────────────────────────────────────────
 @app.get("/")
 def home():
-    return {"message": "🧠 Paragraph Orchestra API (bookmark review ready, no toggle) is live!"}
+    return {"message": "🧠 Paragraph Orchestra API (bookmark review + chat intent) is live!"}
