@@ -282,6 +282,7 @@ and emojis (💡🧠⚕️📘) naturally. Do NOT output code blocks or JSON.
                 .eq("student_id", student_id) \
                 .eq("subject_id", subject_id) \
                 .eq("phase_type", phase_type) \
+                .eq("bookmark_updated_time", bookmark_updated_time)\
                 .execute()
         except Exception as e:
             print(f"⚠️ DB update failed: {e}")
@@ -346,5 +347,6 @@ async def submit_answer(request: Request):
 @app.get("/")
 def home():
     return {"message": "🧠 Paragraph Orchestra API (bookmark review + chat intent) is live!"}
+
 
 
