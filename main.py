@@ -225,7 +225,8 @@ and emojis (💡🧠⚕️📘) naturally. Do NOT output code blocks or JSON.
                         "student_id": student_id,
                         "subject_id": subject_id,
                         "phase_type": phase_type,
-                        "phase_json": phase_json,  # ✅ added here
+                        "phase_json": phase_json,
+                        "bookmark_updated_time": bookmark_updated_time, # ✅ added here
                         "conversation_log": [],
                         "created_at": datetime.utcnow().isoformat() + "Z",
                     })
@@ -345,4 +346,5 @@ async def submit_answer(request: Request):
 @app.get("/")
 def home():
     return {"message": "🧠 Paragraph Orchestra API (bookmark review + chat intent) is live!"}
+
 
