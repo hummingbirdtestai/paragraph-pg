@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
 from supabase import create_client, Client
 import os, asyncio
 from dotenv import load_dotenv
@@ -80,9 +80,9 @@ active_battles = set()
 
 
 @app.post("/battle/start/{battle_id}")
-async def start_battle_till_end(battle_id: str):
+async def start_battle_till_end(battle_id: str, background_tasks: BackgroundTasks):
     """
-    Fully automates the battle sequence:
+    Starts the entire battle sequence in background:
       get_first_mcq → get_battle_stats → get_leader_board → get_next_mcq → …
     With synchronized timers:
       MCQ = 20 s (broadcasts every second)
@@ -93,13 +93,23 @@ async def start_battle_till_end(battle_id: str):
         return {"success": False, "message": "Battle already running."}
 
     active_battles.add(battle_id)
-    print(f"🚀 Starting battle loop for {battle_id}")
+    print(f"🚀 Scheduling battle orchestrator for {battle_id}")
 
+    # Run orchestration in background (non-blocking)
+    background_tasks.add_task(run_battle_sequence, battle_id)
+
+    return {"success": True, "message": f"Battle {battle_id} started in background."}
+
+
+async def run_battle_sequence(battle_id: str):
+    """Background coroutine that runs MCQ → stats → leaderboard loop."""
     try:
-        # 1️⃣ Get first question
+        print(f"🏁 Running orchestrator for {battle_id}")
+
         current = supabase.rpc("get_first_mcq", {"battle_id_input": battle_id}).execute()
         if not current.data:
-            raise HTTPException(status_code=404, detail="No questions found for this battle")
+            print("⚠️ No questions found for this battle.")
+            return
 
         while current.data:
             mcq = current.data[0]
@@ -110,11 +120,10 @@ async def start_battle_till_end(battle_id: str):
                 "data": mcq,
                 "message": f"Question {mcq.get('react_order', '?')} started"
             })
-            print(f"🧩 Question {mcq.get('react_order')} broadcasted")
+            print(f"🧩 Broadcasting question {mcq.get('react_order')}")
 
-            # 🕒 1. Answering phase (20 s) with synchronized timer broadcast
-            ANSWER_DURATION = 20
-            for remaining in range(ANSWER_DURATION, 0, -1):
+            # 🕒 Answering phase: broadcast timer countdown
+            for remaining in range(20, 0, -1):
                 await manager.broadcast({
                     "type": "timer_sync",
                     "seconds_left": remaining,
@@ -122,9 +131,8 @@ async def start_battle_till_end(battle_id: str):
                 })
                 await asyncio.sleep(1)
 
-            # 📊 2. Show battle stats
-            stats_resp = supabase.rpc("get_battle_stats", {"mcq_id_input": mcq["mcq_id"]}).execute()
-            stats = stats_resp.data or []
+            # 📊 Battle stats
+            stats = supabase.rpc("get_battle_stats", {"mcq_id_input": mcq["mcq_id"]}).execute().data or []
             await manager.broadcast({
                 "type": "show_stats",
                 "data": stats,
@@ -133,9 +141,8 @@ async def start_battle_till_end(battle_id: str):
             print(f"📈 Stats broadcasted for {mcq['mcq_id']}")
             await asyncio.sleep(10)
 
-            # 🏆 3. Show leaderboard
-            leaderboard_resp = supabase.rpc("get_leader_board", {"battle_id_input": battle_id}).execute()
-            leaderboard = leaderboard_resp.data or []
+            # 🏆 Leaderboard
+            leaderboard = supabase.rpc("get_leader_board", {"battle_id_input": battle_id}).execute().data or []
             await manager.broadcast({
                 "type": "update_leaderboard",
                 "data": leaderboard,
@@ -144,7 +151,7 @@ async def start_battle_till_end(battle_id: str):
             print(f"🏅 Leaderboard broadcasted for battle {battle_id}")
             await asyncio.sleep(10)
 
-            # ➡️ 4. Next question
+            # ➡️ Next question
             current = supabase.rpc("get_next_mcq", {
                 "battle_id_input": battle_id,
                 "react_order_input": mcq.get("react_order", 0)
@@ -156,11 +163,9 @@ async def start_battle_till_end(battle_id: str):
             "message": "Battle completed! 🏁"
         })
         print(f"✅ Battle {battle_id} completed.")
-        return {"success": True, "message": "Battle completed."}
 
     except Exception as e:
-        print(f"❌ Error in battle loop for {battle_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"💥 Orchestrator error for {battle_id}: {e}")
     finally:
         active_battles.remove(battle_id)
 
@@ -179,7 +184,6 @@ async def battle_room(websocket: WebSocket, battle_id: str):
             data = await websocket.receive_json()
             msg_type = data.get("type")
 
-            # Optional direct triggers from client (like manual end)
             if msg_type == "ping":
                 await websocket.send_json({"type": "pong"})
             elif msg_type == "end_question":
