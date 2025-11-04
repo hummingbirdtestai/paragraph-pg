@@ -87,14 +87,23 @@ async def battle_room(websocket: WebSocket, battle_id: str):
             if data.get("type") == "end_question":
                 mcq_id = data.get("mcq_id")
 
-                # 1️⃣ Fetch bar graph data
+                # 1️⃣ Fetch bar graph data and broadcast immediately
                 stats = supabase.rpc("get_battle_stats", {"mcq_id_input": mcq_id}).execute().data or []
                 await manager.broadcast({"type": "show_stats", "data": stats})
+                print(f"📊 Broadcasted stats for mcq_id={mcq_id}")
 
-                # 2️⃣ Wait 5 seconds → fetch leaderboard
-                await asyncio.sleep(5)
-                leaderboard = supabase.rpc("get_leader_board", {"battle_id_input": battle_id}).execute().data or []
-                await manager.broadcast({"type": "update_leaderboard", "data": leaderboard})
+                # 2️⃣ Schedule leaderboard broadcast asynchronously (no blocking sleep)
+                async def send_leaderboard_after_delay():
+                    try:
+                        await asyncio.sleep(3)  # short delay before leaderboard
+                        leaderboard = supabase.rpc("get_leader_board", {"battle_id_input": battle_id}).execute().data or []
+                        await manager.broadcast({"type": "update_leaderboard", "data": leaderboard})
+                        print(f"🏆 Leaderboard broadcasted for battle {battle_id}")
+                    except Exception as e:
+                        print(f"⚠️ Leaderboard broadcast error: {e}")
+
+                # ✅ Fire and forget — non-blocking
+                asyncio.create_task(send_leaderboard_after_delay())
 
     except WebSocketDisconnect:
         manager.disconnect(websocket)
