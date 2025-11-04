@@ -1,4 +1,3 @@
-# battle_api.py
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from supabase import create_client, Client
 import os, asyncio
@@ -38,6 +37,20 @@ async def get_leaderboard(battle_id: str):
         if not response.data:
             raise HTTPException(status_code=404, detail="No leaderboard found")
         return {"success": True, "data": response.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ✅ NEW: Waiting Room participants endpoint
+@app.get("/battle/participants/{battle_id}")
+async def get_battle_participants(battle_id: str):
+    """Returns list of players (with names & phones) currently joined in the waiting room."""
+    try:
+        response = supabase.rpc("get_battle_room_participants", {"battle_id_input": battle_id}).execute()
+        if response.error:
+            raise HTTPException(status_code=500, detail=response.error)
+        data = response.data or []
+        return {"success": True, "data": data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
