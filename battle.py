@@ -30,11 +30,11 @@ class ConnectionManager:
             self.active_connections.remove(websocket)
 
     async def broadcast(self, message: dict):
+        """Send JSON to all connected clients; remove dead sockets gracefully."""
         for conn in list(self.active_connections):
             try:
                 await conn.send_json(message)
             except Exception:
-                # remove broken sockets
                 self.disconnect(conn)
 
 
@@ -78,12 +78,16 @@ async def get_leaderboard(battle_id: str):
 # -----------------------------------------------------
 active_battles = set()
 
+
 @app.post("/battle/start/{battle_id}")
 async def start_battle_till_end(battle_id: str):
     """
     Fully automates the battle sequence:
       get_first_mcq → get_battle_stats → get_leader_board → get_next_mcq → …
-    With timings: MCQ=20 s, Stats=10 s, Leaderboard=10 s
+    With synchronized timers:
+      MCQ = 20 s (broadcasts every second)
+      Stats = 10 s
+      Leaderboard = 10 s
     """
     if battle_id in active_battles:
         return {"success": False, "message": "Battle already running."}
@@ -108,8 +112,15 @@ async def start_battle_till_end(battle_id: str):
             })
             print(f"🧩 Question {mcq.get('react_order')} broadcasted")
 
-            # 🕒 1. Answering phase (20 s)
-            await asyncio.sleep(20)
+            # 🕒 1. Answering phase (20 s) with synchronized timer broadcast
+            ANSWER_DURATION = 20
+            for remaining in range(ANSWER_DURATION, 0, -1):
+                await manager.broadcast({
+                    "type": "timer_sync",
+                    "seconds_left": remaining,
+                    "message": f"Time remaining: {remaining}s"
+                })
+                await asyncio.sleep(1)
 
             # 📊 2. Show battle stats
             stats_resp = supabase.rpc("get_battle_stats", {"mcq_id_input": mcq["mcq_id"]}).execute()
@@ -172,7 +183,6 @@ async def battle_room(websocket: WebSocket, battle_id: str):
             if msg_type == "ping":
                 await websocket.send_json({"type": "pong"})
             elif msg_type == "end_question":
-                # Allow manual fetch if needed
                 mcq_id = data.get("mcq_id")
                 stats = supabase.rpc("get_battle_stats", {"mcq_id_input": mcq_id}).execute().data or []
                 await manager.broadcast({"type": "show_stats", "data": stats})
