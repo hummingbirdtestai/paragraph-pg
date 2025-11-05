@@ -29,7 +29,6 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 
-
 # 🔍 Log environment variable sanity check
 if not SUPABASE_SERVICE_KEY:
     logger.error("🚨 SUPABASE_SERVICE_ROLE_KEY not found in environment!")
@@ -46,7 +45,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 active_battles = set()
 
 # -----------------------------------------------------
-# 🔹 Broadcast Helper
+# 🔹 Broadcast Helper (✅ Fixed Headers)
 # -----------------------------------------------------
 def broadcast_event(battle_id: str, event: str, payload: dict):
     """Send broadcast event to Supabase Realtime channel."""
@@ -55,7 +54,8 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
         res = requests.post(
             f"{SUPABASE_URL}/realtime/v1/api/broadcast",
             headers={
-                "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+                "apikey": SUPABASE_SERVICE_KEY,                     # ✅ required by Supabase
+                "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",   # ✅ use service key for auth
                 "Content-Type": "application/json",
             },
             json={
@@ -66,6 +66,8 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
             timeout=5,
         )
         logger.info(f"📡 [{battle_id}] Broadcast → {event} (status={res.status_code})")
+        if res.status_code != 200:
+            logger.warning(f"❌ Broadcast failed → {res.text}")
         return res.ok
     except Exception as e:
         logger.error(f"❌ Broadcast failed ({event}): {e}")
