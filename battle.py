@@ -64,7 +64,7 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
             f"{SUPABASE_URL}/realtime/api/v1/broadcast",  # ✅ updated path
             headers={
                 "apikey": SUPABASE_SERVICE_KEY,
-                "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+                "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
                 "Content-Type": "application/json",
             },
             json=body,
