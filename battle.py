@@ -1,9 +1,8 @@
-# battle_api.py  ✅ FINAL PRODUCTION BUILD
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 from dotenv import load_dotenv
-import os, asyncio, logging, requests, time
+import os, asyncio, logging, requests, time, jwt
 
 # -----------------------------------------------------
 # 🔧 Setup
@@ -28,6 +27,18 @@ logger = logging.getLogger("battle_api")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+
+# 🔍 Log environment variable sanity check
+if not SUPABASE_SERVICE_KEY:
+    logger.error("🚨 SUPABASE_SERVICE_ROLE_KEY not found in environment!")
+else:
+    logger.info(f"🔑 Loaded Supabase key length: {len(SUPABASE_SERVICE_KEY)}")
+    try:
+        decoded = jwt.decode(SUPABASE_SERVICE_KEY, options={"verify_signature": False})
+        logger.info(f"🧩 Key decoded → role={decoded.get('role')}, ref={decoded.get('ref')}")
+    except Exception as e:
+        logger.error(f"❌ Failed to decode Supabase key: {e}")
+
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
 active_battles = set()
@@ -38,6 +49,7 @@ active_battles = set()
 def broadcast_event(battle_id: str, event: str, payload: dict):
     """Send broadcast event to Supabase Realtime channel."""
     try:
+        logger.info(f"📡 Broadcasting {event} for battle_id={battle_id} with payload={payload}")
         res = requests.post(
             f"{SUPABASE_URL}/realtime/v1/api/broadcast",
             headers={
@@ -51,7 +63,7 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
             },
             timeout=5,
         )
-        logger.info(f"📡 [{battle_id}] Broadcast → {event} ({res.status_code})")
+        logger.info(f"📡 [{battle_id}] Broadcast → {event} (status={res.status_code})")
         return res.ok
     except Exception as e:
         logger.error(f"❌ Broadcast failed ({event}): {e}")
@@ -63,6 +75,7 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
 # -----------------------------------------------------
 @app.get("/")
 async def root():
+    logger.info("🌐 Health check hit: /")
     return {"status": "Battle API running ✅"}
 
 
@@ -71,25 +84,29 @@ async def root():
 # -----------------------------------------------------
 @app.post("/battle/get_stats")
 async def get_battle_stats(mcq_id: str):
+    logger.info(f"📊 get_battle_stats called with mcq_id={mcq_id}")
     try:
         resp = supabase.rpc("get_battle_stats", {"mcq_id_input": mcq_id}).execute()
+        logger.info(f"🧾 Supabase RPC get_battle_stats → data={resp.data}")
         if not resp.data:
             raise HTTPException(status_code=404, detail="No stats found")
         return {"success": True, "data": resp.data}
     except Exception as e:
-        logger.error(e)
+        logger.error(f"💥 get_battle_stats failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/battle/leaderboard")
 async def get_leaderboard(battle_id: str):
+    logger.info(f"🏆 get_leaderboard called with battle_id={battle_id}")
     try:
         resp = supabase.rpc("get_leader_board", {"battle_id_input": battle_id}).execute()
+        logger.info(f"🧾 Supabase RPC get_leader_board → data={resp.data}")
         if not resp.data:
             raise HTTPException(status_code=404, detail="No leaderboard found")
         return {"success": True, "data": resp.data}
     except Exception as e:
-        logger.error(e)
+        logger.error(f"💥 get_leaderboard failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -99,20 +116,25 @@ async def get_leaderboard(battle_id: str):
 @app.post("/battle/start/{battle_id}")
 async def start_battle(battle_id: str, background_tasks: BackgroundTasks):
     """Starts orchestrator if players exist; else waits 30-min grace."""
+    logger.info(f"🚀 /battle/start called for battle_id={battle_id}")
     try:
-        participants = (
+        logger.info(f"🔍 Fetching participants from Supabase for {battle_id}")
+        participants_resp = (
             supabase.table("battle_participants")
-            .select("id")
+            .select("id,user_id,username,status")
             .eq("battle_id", battle_id)
             .eq("status", "joined")
             .execute()
-            .data
-            or []
         )
 
-        logger.info(f"🔍 [{battle_id}] Joined players: {len(participants)}")
+        logger.info(f"🧾 Supabase response: {participants_resp}")
+        participants = participants_resp.data or []
+        logger.info(f"👥 Joined players count = {len(participants)}")
+        logger.info(f"👥 Participants data = {participants}")
 
+        # --------------------------------------------------
         if not participants:
+            logger.info(f"⏸ No participants found. Marking as Active and entering grace period.")
             supabase.table("battle_schedule").update(
                 {"status": "Active"}
             ).eq("battle_id", battle_id).execute()
@@ -123,6 +145,7 @@ async def start_battle(battle_id: str, background_tasks: BackgroundTasks):
             logger.info(f"⏳ Grace period started for {battle_id}")
             return {"success": False, "message": "Waiting for players (30-min grace window)"}
 
+        # --------------------------------------------------
         if battle_id in active_battles:
             logger.warning(f"⚠ Battle {battle_id} already running")
             return {"success": False, "message": "Already running"}
@@ -132,7 +155,7 @@ async def start_battle(battle_id: str, background_tasks: BackgroundTasks):
             {"status": "Active"}
         ).eq("battle_id", battle_id).execute()
 
-        logger.info(f"🚀 Battle {battle_id} started with {len(participants)} players")
+        logger.info(f"✅ Starting orchestrator for battle_id={battle_id} with {len(participants)} players")
         background_tasks.add_task(run_battle_sequence, battle_id)
         return {"success": True, "message": f"Battle {battle_id} orchestrator launched"}
 
@@ -146,6 +169,7 @@ async def start_battle(battle_id: str, background_tasks: BackgroundTasks):
 # -----------------------------------------------------
 def expire_battle_if_empty(battle_id: str):
     """Marks battle Completed after 30-min grace if no players joined."""
+    logger.info(f"🕒 Starting grace expiry timer for battle_id={battle_id}")
     time.sleep(30 * 60)
     participants = (
         supabase.table("battle_participants")
@@ -157,11 +181,14 @@ def expire_battle_if_empty(battle_id: str):
         or []
     )
     if not participants:
+        logger.info(f"💤 No players joined in grace window. Completing battle {battle_id}")
         supabase.table("battle_schedule").update(
             {"status": "Completed"}
         ).eq("battle_id", battle_id).execute()
         broadcast_event(battle_id, "battle_end", {"message": "No players joined. Battle expired."})
         logger.warning(f"🕒 Battle {battle_id} expired due to inactivity.")
+    else:
+        logger.info(f"🎮 Players joined during grace period → {len(participants)} participants")
 
 
 # -----------------------------------------------------
@@ -169,10 +196,11 @@ def expire_battle_if_empty(battle_id: str):
 # -----------------------------------------------------
 async def run_battle_sequence(battle_id: str):
     """start_orchestra → +20s get_bar_graph → +10s get_leader_board → +10s get_next_mcq → repeat"""
+    logger.info(f"🏁 Orchestrator started for battle_id={battle_id}")
     try:
-        logger.info(f"🏁 Orchestrator started for {battle_id}")
-
         current = supabase.rpc("get_first_mcq", {"battle_id_input": battle_id}).execute()
+        logger.info(f"🧾 RPC get_first_mcq → {current.data}")
+
         if not current.data:
             logger.warning(f"⚠ No questions found for {battle_id}")
             broadcast_event(battle_id, "battle_end", {"message": "No MCQs found"})
@@ -186,21 +214,18 @@ async def run_battle_sequence(battle_id: str):
             broadcast_event(battle_id, "new_question", mcq)
             logger.info(f"🧩 Battle {battle_id} → Q{react_order} started")
 
-            # 20 s → get_bar_graph
             await asyncio.sleep(20)
             bar = supabase.rpc("get_bar_graph", {"mcq_id_input": mcq_id}).execute().data or []
+            logger.info(f"📊 Q{react_order}: get_bar_graph → {bar}")
             broadcast_event(battle_id, "show_stats", bar)
-            logger.info(f"📊 Q{react_order}: get_bar_graph fired (+20 s)")
 
-            # 10 s → get_leader_board
             await asyncio.sleep(10)
             lead = supabase.rpc("get_leader_board", {"battle_id_input": battle_id}).execute().data or []
+            logger.info(f"🏆 Q{react_order}: get_leader_board → {lead}")
             broadcast_event(battle_id, "update_leaderboard", lead)
-            logger.info(f"🏆 Q{react_order}: get_leader_board fired (+30 s)")
 
-            # 10 s → get_next_mcq
             await asyncio.sleep(10)
-            logger.info(f"➡ Q{react_order}: get_next_mcq fired (+40 s)")
+            logger.info(f"➡ Q{react_order}: fetching next MCQ")
             next_q = supabase.rpc(
                 "get_next_mcq",
                 {"battle_id_input": battle_id, "react_order_input": react_order},
@@ -214,10 +239,10 @@ async def run_battle_sequence(battle_id: str):
                 logger.info(f"✅ Battle {battle_id} completed.")
                 break
 
-            current = next_q  # move to next MCQ
+            current = next_q
 
     except Exception as e:
         logger.error(f"💥 Orchestrator error for {battle_id}: {e}")
     finally:
         active_battles.discard(battle_id)
-        logger.info(f"🧹 Orchestrator stopped for {battle_id}")
+        logger.info(f"🧹 Orchestrator stopped for {battle_id}")
