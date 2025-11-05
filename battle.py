@@ -45,7 +45,7 @@ active_battles = set()
 
 
 # -----------------------------------------------------
-# 🔹 Broadcast Helper (✅ Fixed for 2025 Supabase Realtime)
+# 🔹 Broadcast Helper (✅ Correct legacy Realtime path)
 # -----------------------------------------------------
 def broadcast_event(battle_id: str, event: str, payload: dict):
     """Send broadcast event to Supabase Realtime channel."""
@@ -58,17 +58,17 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
             }
         }
 
-        # ✅ Correct Realtime endpoint
-        realtime_url = f"https://realtime-{SUPABASE_URL.replace('https://', '')}/api/broadcast"
+        # ✅ Legacy projects use this internal path (not the realtime- subdomain)
+        realtime_url = f"{SUPABASE_URL}/realtime/v1/api/broadcast"
 
+        logger.info(f"🌍 Realtime URL (legacy) = {realtime_url}")
         logger.info(f"📡 Broadcasting {event} for battle_id={battle_id}")
         logger.info(f"🧠 Outgoing broadcast JSON = {json.dumps(body, indent=2)}")
-        logger.info(f"🌍 Realtime URL = {realtime_url}")
 
         res = requests.post(
             realtime_url,
             headers={
-                "apikey": SUPABASE_SERVICE_KEY,  # must be service role
+                "apikey": SUPABASE_SERVICE_KEY,  # service key required
                 "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
                 "Content-Type": "application/json",
             },
@@ -79,6 +79,8 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
         logger.info(f"📡 [{battle_id}] Broadcast → {event} (status={res.status_code})")
         if res.status_code != 200:
             logger.warning(f"❌ Broadcast failed → {res.text}")
+        else:
+            logger.info(f"✅ Broadcast succeeded for {event}")
         return res.ok
 
     except Exception as e:
