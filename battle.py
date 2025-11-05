@@ -1,17 +1,24 @@
 from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 from dotenv import load_dotenv
 import os, asyncio, time, requests
 
-# -----------------------------------------------------
-# 🔹 SETUP
-# -----------------------------------------------------
 load_dotenv()
 app = FastAPI(title="Battle API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # or restrict to your frontend URLs
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
 
 # -----------------------------------------------------
 # 🔹 SUPABASE REALTIME BROADCAST HELPER
