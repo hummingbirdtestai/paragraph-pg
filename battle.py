@@ -53,7 +53,7 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
         res = requests.post(
             f"{SUPABASE_URL}/realtime/v1/api/broadcast",
             headers={
-                "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+                "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
                 "Content-Type": "application/json",
             },
             json={
