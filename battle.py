@@ -217,7 +217,7 @@ async def run_battle_sequence(battle_id: str):
             logger.info(f"🧩 Battle {battle_id} → Q{react_order} started")
 
             await asyncio.sleep(20)
-            bar = supabase.rpc("get_bar_graph", {"mcq_id_input": mcq_id}).execute().data or []
+            bar = supabase.rpc("get_battle_stats", {"mcq_id_input": mcq_id}).execute().data or []
             logger.info(f"📊 Q{react_order}: get_bar_graph → {bar}")
             broadcast_event(battle_id, "show_stats", bar)
 
