@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 from dotenv import load_dotenv
-import os, asyncio, logging, requests, time, jwt
+import os, asyncio, logging, requests, time, jwt, json
 
 # -----------------------------------------------------
 # 🔧 Setup
@@ -41,31 +41,33 @@ else:
         logger.error(f"❌ Failed to decode Supabase key: {e}")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-
 active_battles = set()
 
 # -----------------------------------------------------
-# 🔹 Broadcast Helper (✅ Fixed JSON shape)
+# 🔹 Broadcast Helper (✅ Corrected for 2025 Realtime API)
 # -----------------------------------------------------
 def broadcast_event(battle_id: str, event: str, payload: dict):
     """Send broadcast event to Supabase Realtime channel."""
     try:
-        logger.info(f"📡 Broadcasting {event} for battle_id={battle_id} with payload={payload}")
+        body = {
+            "broadcast": {
+                "topic": f"realtime:battle_{battle_id}",
+                "event": event,
+                "payload": payload,
+            }
+        }
+
+        logger.info(f"📡 Broadcasting {event} for battle_id={battle_id}")
+        logger.info(f"🧠 Outgoing broadcast JSON = {json.dumps(body, indent=2)}")
 
         res = requests.post(
-            f"{SUPABASE_URL}/realtime/v1/api/broadcast",
+            f"{SUPABASE_URL}/realtime/api/v1/broadcast",  # ✅ updated path
             headers={
-                "apikey": SUPABASE_SERVICE_KEY,                     # Required for Realtime API
-                "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",   # Use service key for full access
+                "apikey": SUPABASE_SERVICE_KEY,
+                "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
                 "Content-Type": "application/json",
             },
-            json={
-                "broadcast": {                                      # ✅ Correct nested body
-                    "channel": f"battle_{battle_id}",
-                    "event": event,
-                    "payload": payload,
-                }
-            },
+            json=body,
             timeout=5,
         )
 
@@ -141,20 +143,16 @@ async def start_battle(battle_id: str, background_tasks: BackgroundTasks):
         logger.info(f"👥 Joined players count = {len(participants)}")
         logger.info(f"👥 Participants data = {participants}")
 
-        # --------------------------------------------------
         if not participants:
             logger.info(f"⏸ No participants found. Marking as Active and entering grace period.")
             supabase.table("battle_schedule").update(
                 {"status": "Active"}
             ).eq("battle_id", battle_id).execute()
             background_tasks.add_task(expire_battle_if_empty, battle_id)
-            broadcast_event(
-                battle_id, "waiting_period", {"message": "⌛ Waiting for players to join..."}
-            )
+            broadcast_event(battle_id, "waiting_period", {"message": "⌛ Waiting for players to join..."})
             logger.info(f"⏳ Grace period started for {battle_id}")
             return {"success": False, "message": "Waiting for players (30-min grace window)"}
 
-        # --------------------------------------------------
         if battle_id in active_battles:
             logger.warning(f"⚠ Battle {battle_id} already running")
             return {"success": False, "message": "Already running"}
