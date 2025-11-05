@@ -43,8 +43,9 @@ else:
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 active_battles = set()
 
+
 # -----------------------------------------------------
-# 🔹 Broadcast Helper (✅ Corrected for 2025 Realtime API)
+# 🔹 Broadcast Helper (✅ Fixed for 2025 Supabase Realtime)
 # -----------------------------------------------------
 def broadcast_event(battle_id: str, event: str, payload: dict):
     """Send broadcast event to Supabase Realtime channel."""
@@ -57,14 +58,18 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
             }
         }
 
+        # ✅ Correct Realtime endpoint
+        realtime_url = f"https://realtime-{SUPABASE_URL.replace('https://', '')}/api/broadcast"
+
         logger.info(f"📡 Broadcasting {event} for battle_id={battle_id}")
         logger.info(f"🧠 Outgoing broadcast JSON = {json.dumps(body, indent=2)}")
+        logger.info(f"🌍 Realtime URL = {realtime_url}")
 
         res = requests.post(
-            f"{SUPABASE_URL}/realtime/api/v1/broadcast",  # ✅ updated path
+            realtime_url,
             headers={
-                "apikey": SUPABASE_ANON_KEY,
-                "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+                "apikey": SUPABASE_SERVICE_KEY,  # must be service role
+                "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
                 "Content-Type": "application/json",
             },
             json=body,
