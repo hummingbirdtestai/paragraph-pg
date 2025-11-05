@@ -27,6 +27,8 @@ logger = logging.getLogger("battle_api")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
+
 
 # 🔍 Log environment variable sanity check
 if not SUPABASE_SERVICE_KEY:
