@@ -1,5 +1,8 @@
 fastapi
-uvicorn
+uvicorn[standard]
 supabase
-openai
 python-dotenv
+requests
+openai
+httpx
+starlette
