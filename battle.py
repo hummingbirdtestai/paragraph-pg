@@ -29,7 +29,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 
-# 🔍 Log environment variable sanity check
+# 🔍 Sanity check
 if not SUPABASE_SERVICE_KEY:
     logger.error("🚨 SUPABASE_SERVICE_ROLE_KEY not found in environment!")
 else:
@@ -45,32 +45,37 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 active_battles = set()
 
 # -----------------------------------------------------
-# 🔹 Broadcast Helper (✅ Fixed Headers)
+# 🔹 Broadcast Helper (✅ Fixed JSON shape)
 # -----------------------------------------------------
 def broadcast_event(battle_id: str, event: str, payload: dict):
     """Send broadcast event to Supabase Realtime channel."""
     try:
         logger.info(f"📡 Broadcasting {event} for battle_id={battle_id} with payload={payload}")
+
         res = requests.post(
             f"{SUPABASE_URL}/realtime/v1/api/broadcast",
             headers={
-                "apikey": SUPABASE_SERVICE_KEY,                     # ✅ required by Supabase
-                "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",   # ✅ use service key for auth
+                "apikey": SUPABASE_SERVICE_KEY,                     # Required for Realtime API
+                "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",   # Use service key for full access
                 "Content-Type": "application/json",
             },
             json={
-                "channel": f"battle_{battle_id}",
-                "event": event,
-                "payload": payload,
+                "broadcast": {                                      # ✅ Correct nested body
+                    "channel": f"battle_{battle_id}",
+                    "event": event,
+                    "payload": payload,
+                }
             },
             timeout=5,
         )
+
         logger.info(f"📡 [{battle_id}] Broadcast → {event} (status={res.status_code})")
         if res.status_code != 200:
             logger.warning(f"❌ Broadcast failed → {res.text}")
         return res.ok
+
     except Exception as e:
-        logger.error(f"❌ Broadcast failed ({event}): {e}")
+        logger.error(f"💥 Broadcast failed ({event}): {e}")
         return False
 
 
