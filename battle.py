@@ -43,32 +43,28 @@ else:
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 active_battles = set()
 
-
 # -----------------------------------------------------
-# 🔹 Broadcast Helper (✅ Correct legacy Realtime path)
+# 🔹 Broadcast Helper (✅ Correct modern Realtime format)
 # -----------------------------------------------------
 def broadcast_event(battle_id: str, event: str, payload: dict):
-    """Send broadcast event to Supabase Realtime channel."""
+    """Send broadcast event to Supabase Realtime channel (flat JSON)."""
     try:
         body = {
-            "broadcast": {
-                "topic": f"realtime:battle_{battle_id}",
-                "event": event,
-                "payload": payload,
-            }
+            "topic": f"battle_{battle_id}",   # ✅ no 'realtime:' prefix
+            "event": event,
+            "payload": payload,
         }
 
-        # ✅ Legacy projects use this internal path (not the realtime- subdomain)
         realtime_url = f"{SUPABASE_URL}/realtime/v1/api/broadcast"
 
-        logger.info(f"🌍 Realtime URL (legacy) = {realtime_url}")
-        logger.info(f"📡 Broadcasting {event} for battle_id={battle_id}")
-        logger.info(f"🧠 Outgoing broadcast JSON = {json.dumps(body, indent=2)}")
+        logger.info(f"🌍 Realtime URL = {realtime_url}")
+        logger.info(f"📡 Broadcasting {event} → battle_{battle_id}")
+        logger.info(f"🧠 Payload = {json.dumps(body, indent=2)}")
 
         res = requests.post(
             realtime_url,
             headers={
-                "apikey": SUPABASE_SERVICE_KEY,  # service key required
+                "apikey": SUPABASE_SERVICE_KEY,
                 "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
                 "Content-Type": "application/json",
             },
@@ -87,7 +83,6 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
         logger.error(f"💥 Broadcast failed ({event}): {e}")
         return False
 
-
 # -----------------------------------------------------
 # 🔹 Root Endpoint
 # -----------------------------------------------------
@@ -95,7 +90,6 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
 async def root():
     logger.info("🌐 Health check hit: /")
     return {"status": "Battle API running ✅"}
-
 
 # -----------------------------------------------------
 # 🔹 Utility Endpoints
@@ -113,7 +107,6 @@ async def get_battle_stats(mcq_id: str):
         logger.error(f"💥 get_battle_stats failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.post("/battle/leaderboard")
 async def get_leaderboard(battle_id: str):
     logger.info(f"🏆 get_leaderboard called with battle_id={battle_id}")
@@ -126,7 +119,6 @@ async def get_leaderboard(battle_id: str):
     except Exception as e:
         logger.error(f"💥 get_leaderboard failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 # -----------------------------------------------------
 # 🔹 Battle Start Endpoint
@@ -145,13 +137,11 @@ async def start_battle(battle_id: str, background_tasks: BackgroundTasks):
             .execute()
         )
 
-        logger.info(f"🧾 Supabase response: {participants_resp}")
         participants = participants_resp.data or []
         logger.info(f"👥 Joined players count = {len(participants)}")
-        logger.info(f"👥 Participants data = {participants}")
 
         if not participants:
-            logger.info(f"⏸ No participants found. Marking as Active and entering grace period.")
+            logger.info(f"⏸ No participants found. Marking Active & entering grace period.")
             supabase.table("battle_schedule").update(
                 {"status": "Active"}
             ).eq("battle_id", battle_id).execute()
@@ -177,7 +167,6 @@ async def start_battle(battle_id: str, background_tasks: BackgroundTasks):
         logger.error(f"💥 start_battle failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 # -----------------------------------------------------
 # 🔹 Grace Expiry Handler
 # -----------------------------------------------------
@@ -200,10 +189,8 @@ def expire_battle_if_empty(battle_id: str):
             {"status": "Completed"}
         ).eq("battle_id", battle_id).execute()
         broadcast_event(battle_id, "battle_end", {"message": "No players joined. Battle expired."})
-        logger.warning(f"🕒 Battle {battle_id} expired due to inactivity.")
     else:
         logger.info(f"🎮 Players joined during grace period → {len(participants)} participants")
-
 
 # -----------------------------------------------------
 # 🔹 Main Orchestrator Loop
