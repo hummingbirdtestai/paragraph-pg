@@ -43,6 +43,25 @@ else:
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 active_battles = set()
 
+# -----------------------------------------------------
+# 🔹 Helper: Generate short-lived JWT for Realtime
+# -----------------------------------------------------
+def get_realtime_jwt():
+    """Generate a short-lived JWT with audience=realtime for broadcasting."""
+    try:
+        decoded = jwt.decode(SUPABASE_SERVICE_KEY, options={"verify_signature": False})
+        project_ref = decoded.get("ref")
+        payload = {
+            "aud": "realtime",
+            "role": "service_role",
+            "iss": f"https://{project_ref}.supabase.co",
+        }
+        token = jwt.encode(payload, SUPABASE_SERVICE_KEY, algorithm="HS256")
+        return token
+    except Exception as e:
+        logger.error(f"❌ Failed to create realtime JWT: {e}")
+        return SUPABASE_SERVICE_KEY  # fallback
+
 
 # -----------------------------------------------------
 # 🔹 Broadcast Helper (✅ Realtime v2 REST schema)
@@ -62,6 +81,7 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
 
         # ✅ New v2 endpoint
         realtime_url = f"{SUPABASE_URL}/realtime/v1/broadcast"
+        realtime_jwt = get_realtime_jwt()  # 🔥 Use JWT for realtime auth
 
         logger.info(f"🌍 Realtime URL = {realtime_url}")
         logger.info(f"📡 Broadcasting {event} → battle_{battle_id}")
@@ -71,7 +91,7 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
             realtime_url,
             headers={
                 "apikey": SUPABASE_SERVICE_KEY,
-                "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+                "Authorization": f"Bearer {realtime_jwt}",  # ✅ Correct JWT now
                 "Content-Type": "application/json",
             },
             json=body,
