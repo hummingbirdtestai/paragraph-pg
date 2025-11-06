@@ -95,7 +95,7 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
             ]
         }
 
-        realtime_url = f"{SUPABASE_URL}/realtime/v1/broadcast"
+        realtime_url = f"{SUPABASE_URL}/realtime/v1/api/broadcast"
         realtime_jwt = get_realtime_jwt()  # ✅ Use correct JWT
 
         logger.info(f"🌍 Realtime URL = {realtime_url}")
