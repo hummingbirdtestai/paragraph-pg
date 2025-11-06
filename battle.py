@@ -60,7 +60,7 @@ def get_realtime_jwt():
         }
 
         # ⚙️ TEMPORARY DEBUG LOGS
-        signing_key = SUPABASE_SERVICE_KEY  # or change manually to SUPABASE_JWT_SECRET when testing
+        signing_key = SUPABASE_JWT_SECRET  # or change manually to SUPABASE_JWT_SECRET when testing
         token = jwt.encode(payload, signing_key, algorithm="HS256")
 
         logger.info("🔐 Generated Realtime JWT payload:")
