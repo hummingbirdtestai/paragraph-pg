@@ -91,7 +91,7 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
         body = {
             "messages": [
                 {
-                    "topic": f"battle_{battle_id}",
+                    "topic": f"battle:{battle_id}",
                     "event": event,
                     "payload": payload,
                 }
