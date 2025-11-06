@@ -43,19 +43,25 @@ else:
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 active_battles = set()
 
+
 # -----------------------------------------------------
-# 🔹 Broadcast Helper (✅ Correct modern Realtime format)
+# 🔹 Broadcast Helper (✅ Realtime v2 REST schema)
 # -----------------------------------------------------
 def broadcast_event(battle_id: str, event: str, payload: dict):
-    """Send broadcast event to Supabase Realtime channel (flat JSON)."""
+    """Send broadcast event to Supabase Realtime channel (v2 format)."""
     try:
         body = {
-            "topic": f"battle_{battle_id}",   # ✅ no 'realtime:' prefix
-            "event": event,
-            "payload": payload,
+            "messages": [
+                {
+                    "topic": f"battle_{battle_id}",
+                    "event": event,
+                    "payload": payload,
+                }
+            ]
         }
 
-        realtime_url = f"{SUPABASE_URL}/realtime/v1/api/broadcast"
+        # ✅ New v2 endpoint
+        realtime_url = f"{SUPABASE_URL}/realtime/v1/broadcast"
 
         logger.info(f"🌍 Realtime URL = {realtime_url}")
         logger.info(f"📡 Broadcasting {event} → battle_{battle_id}")
@@ -83,6 +89,7 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
         logger.error(f"💥 Broadcast failed ({event}): {e}")
         return False
 
+
 # -----------------------------------------------------
 # 🔹 Root Endpoint
 # -----------------------------------------------------
@@ -90,6 +97,7 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
 async def root():
     logger.info("🌐 Health check hit: /")
     return {"status": "Battle API running ✅"}
+
 
 # -----------------------------------------------------
 # 🔹 Utility Endpoints
@@ -107,6 +115,7 @@ async def get_battle_stats(mcq_id: str):
         logger.error(f"💥 get_battle_stats failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.post("/battle/leaderboard")
 async def get_leaderboard(battle_id: str):
     logger.info(f"🏆 get_leaderboard called with battle_id={battle_id}")
@@ -119,6 +128,7 @@ async def get_leaderboard(battle_id: str):
     except Exception as e:
         logger.error(f"💥 get_leaderboard failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 # -----------------------------------------------------
 # 🔹 Battle Start Endpoint
@@ -167,6 +177,7 @@ async def start_battle(battle_id: str, background_tasks: BackgroundTasks):
         logger.error(f"💥 start_battle failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 # -----------------------------------------------------
 # 🔹 Grace Expiry Handler
 # -----------------------------------------------------
@@ -191,6 +202,7 @@ def expire_battle_if_empty(battle_id: str):
         broadcast_event(battle_id, "battle_end", {"message": "No players joined. Battle expired."})
     else:
         logger.info(f"🎮 Players joined during grace period → {len(participants)} participants")
+
 
 # -----------------------------------------------------
 # 🔹 Main Orchestrator Loop
