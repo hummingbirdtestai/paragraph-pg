@@ -114,6 +114,8 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
                 "apikey": SUPABASE_SERVICE_KEY,
                 "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
                 "Content-Type": "application/json",
+                "x-project-ref": SUPABASE_URL.split("//")[1].split(".")[0],
+                "x-client-info": "supabase-py-broadcast",
             },
             json=body,
             timeout=5,
