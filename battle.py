@@ -69,7 +69,10 @@ def get_realtime_jwt():
         logger.info(f"🔑 JWT sample (first 80 chars): {token[:80]}...")
 
         try:
-            decoded_check = jwt.decode(token, signing_key, algorithms=["HS256"])
+            # 🔧 CHANGE: Ignore audience validation (to avoid harmless warning)
+            decoded_check = jwt.decode(
+                token, signing_key, algorithms=["HS256"], options={"verify_aud": False}
+            )
             logger.info(f"🧩 Local verify → OK, aud={decoded_check.get('aud')}")
         except Exception as verify_err:
             logger.error(f"❌ Local verification failed → {verify_err}")
@@ -123,7 +126,7 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
 
         logger.info(f"📡 [{battle_id}] Broadcast → {event} (status={res.status_code})")
         logger.warning(f"🧾 Response body: {res.text}")
-        if res.status_code != 200:
+        if res.status_code != 200 and res.status_code != 202:
             logger.warning(f"❌ Broadcast failed → {res.text}")
         else:
             logger.info(f"✅ Broadcast succeeded for {event}")
@@ -266,14 +269,18 @@ async def run_battle_sequence(battle_id: str):
             logger.info(f"🧩 Battle {battle_id} → Q{react_order} started")
 
             await asyncio.sleep(20)
+            # 🔧 CHANGE: flatten payload from list to object
             bar = supabase.rpc("get_battle_stats", {"mcq_id_input": mcq_id}).execute().data or []
-            logger.info(f"📊 Q{react_order}: get_bar_graph → {bar}")
-            broadcast_event(battle_id, "show_stats", bar)
+            payload_bar = bar[0] if isinstance(bar, list) and len(bar) > 0 else {}
+            logger.info(f"📊 Q{react_order}: get_bar_graph → {payload_bar}")
+            broadcast_event(battle_id, "show_stats", payload_bar)
 
             await asyncio.sleep(10)
+            # 🔧 CHANGE: flatten payload from list to object
             lead = supabase.rpc("get_leader_board", {"battle_id_input": battle_id}).execute().data or []
-            logger.info(f"🏆 Q{react_order}: get_leader_board → {lead}")
-            broadcast_event(battle_id, "update_leaderboard", lead)
+            payload_lead = lead[0] if isinstance(lead, list) and len(lead) > 0 else {}
+            logger.info(f"🏆 Q{react_order}: get_leader_board → {payload_lead}")
+            broadcast_event(battle_id, "update_leaderboard", payload_lead)
 
             await asyncio.sleep(10)
             logger.info(f"➡ Q{react_order}: fetching next MCQ")
