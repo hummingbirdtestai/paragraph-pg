@@ -53,8 +53,9 @@ def get_realtime_jwt():
         decoded = jwt.decode(SUPABASE_SERVICE_KEY, options={"verify_signature": False})
         project_ref = decoded.get("ref")
         payload = {
-            "aud": "realtime",
+            "aud": "supabase_realtime",
             "role": "service_role",
+            "sub": "service_role",
             "iss": f"https://{project_ref}.supabase.co",
             "exp": int(time.time()) + 60,  # valid 60s
         }
