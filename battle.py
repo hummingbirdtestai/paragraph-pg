@@ -59,7 +59,8 @@ def get_realtime_jwt():
             "exp": int(time.time()) + 60,  # valid 60s
         }
 
-        signing_key = SUPABASE_JWT_SECRET
+        # ⚙️ TEMPORARY DEBUG LOGS
+        signing_key = SUPABASE_JWT_SECRET  # or change manually to SUPABASE_JWT_SECRET when testing
         token = jwt.encode(payload, signing_key, algorithm="HS256")
 
         logger.info("🔐 Generated Realtime JWT payload:")
@@ -68,6 +69,7 @@ def get_realtime_jwt():
         logger.info(f"🔑 JWT sample (first 80 chars): {token[:80]}...")
 
         try:
+            # 🔧 CHANGE: Ignore audience validation (to avoid harmless warning)
             decoded_check = jwt.decode(
                 token, signing_key, algorithms=["HS256"], options={"verify_aud": False}
             )
@@ -97,7 +99,7 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
         }
 
         realtime_url = f"{SUPABASE_URL}/realtime/v1/api/broadcast"
-        realtime_jwt = get_realtime_jwt()
+        realtime_jwt = get_realtime_jwt()  # ✅ Use correct JWT
 
         logger.info(f"🌍 Realtime URL = {realtime_url}")
         logger.info(f"📡 Broadcasting {event} → battle_{battle_id}")
@@ -124,7 +126,7 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
 
         logger.info(f"📡 [{battle_id}] Broadcast → {event} (status={res.status_code})")
         logger.warning(f"🧾 Response body: {res.text}")
-        if res.status_code not in (200, 202):
+        if res.status_code != 200 and res.status_code != 202:
             logger.warning(f"❌ Broadcast failed → {res.text}")
         else:
             logger.info(f"✅ Broadcast succeeded for {event}")
@@ -172,54 +174,45 @@ async def get_leaderboard(battle_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 # -----------------------------------------------------
-# 🔹 Battle Start Endpoint (Instant Start, No Grace Mode)
+# 🔹 Battle Start Endpoint
 # -----------------------------------------------------
 @app.post("/battle/start/{battle_id}")
 async def start_battle(battle_id: str, background_tasks: BackgroundTasks):
-    """
-    Instantly starts the orchestrator for the given battle_id
-    without checking for participants or grace period.
-    """
     logger.info(f"🚀 /battle/start called for battle_id={battle_id}")
-
     try:
-        # 🔒 Prevent duplicate orchestrators
+        logger.info(f"🔍 Fetching participants from Supabase for {battle_id}")
+        participants_resp = (
+            supabase.table("battle_participants")
+            .select("id,user_id,username,status")
+            .eq("battle_id", battle_id)
+            .eq("status", "joined")
+            .execute()
+        )
+
+        participants = participants_resp.data or []
+        logger.info(f"👥 Joined players count = {len(participants)}")
+
         if battle_id in active_battles:
             logger.warning(f"⚠ Battle {battle_id} already running")
             return {"success": False, "message": "Already running"}
 
         active_battles.add(battle_id)
 
-        # 🟢 Immediately mark as Active
+        # 🚀 Start immediately even if no participants joined
         supabase.table("battle_schedule").update(
             {"status": "Active"}
         ).eq("battle_id", battle_id).execute()
 
-        # 🧠 Optional: log participants count for visibility
-        participants_count = (
-            supabase.table("battle_participants")
-            .select("id", count="exact", head=True)
-            .eq("battle_id", battle_id)
-            .execute()
-            .count or 0
-        )
-        logger.info(f"👥 Participants present at start: {participants_count}")
-
-        # 📡 Broadcast immediate start signal
-        broadcast_event(battle_id, "battle_start", {
-            "message": "🚀 Battle orchestrator started immediately",
-            "timestamp": time.time(),
-        })
-
-        # 🔁 Launch orchestrator in background
+        broadcast_event(battle_id, "battle_start", {"message": "🚀 Battle started instantly"})
         background_tasks.add_task(run_battle_sequence, battle_id)
-
-        logger.info(f"✅ Orchestrator launched instantly for {battle_id}")
-        return {"success": True, "message": f"Battle {battle_id} orchestrator launched"}
+        logger.info(f"✅ Instant start triggered for battle_id={battle_id}")
+        return {"success": True, "message": f"Battle {battle_id} orchestrator launched instantly"}
 
     except Exception as e:
         logger.error(f"💥 start_battle failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
 
 # -----------------------------------------------------
 # 🔹 Main Orchestrator Loop
@@ -245,12 +238,14 @@ async def run_battle_sequence(battle_id: str):
             logger.info(f"🧩 Battle {battle_id} → Q{react_order} started")
 
             await asyncio.sleep(20)
+            # 🔧 CHANGE: flatten payload from list to object
             bar = supabase.rpc("get_battle_stats", {"mcq_id_input": mcq_id}).execute().data or []
             payload_bar = bar[0] if isinstance(bar, list) and len(bar) > 0 else {}
             logger.info(f"📊 Q{react_order}: get_bar_graph → {payload_bar}")
             broadcast_event(battle_id, "show_stats", payload_bar)
 
             await asyncio.sleep(10)
+            # 🔧 CHANGE: flatten payload from list to object
             lead = supabase.rpc("get_leader_board", {"battle_id_input": battle_id}).execute().data or []
             payload_lead = lead[0] if isinstance(lead, list) and len(lead) > 0 else {}
             logger.info(f"🏆 Q{react_order}: get_leader_board → {payload_lead}")
