@@ -115,7 +115,7 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
             realtime_url,
             headers={
                 "apikey": SUPABASE_SERVICE_KEY,
-                "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+                "Authorization": f"Bearer {realtime_jwt}",
                 "Content-Type": "application/json",
                 "x-project-ref": SUPABASE_URL.split("//")[1].split(".")[0],
                 "x-client-info": "supabase-py-broadcast",
