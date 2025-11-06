@@ -44,10 +44,10 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 active_battles = set()
 
 # -----------------------------------------------------
-# 🔹 Helper: Generate short-lived JWT for Realtime
+# 🔹 Helper: Generate Realtime JWT (aud = realtime)
 # -----------------------------------------------------
 def get_realtime_jwt():
-    """Generate a short-lived JWT with audience=realtime for broadcasting."""
+    """Generate short-lived JWT accepted by Supabase Realtime REST API."""
     try:
         decoded = jwt.decode(SUPABASE_SERVICE_KEY, options={"verify_signature": False})
         project_ref = decoded.get("ref")
@@ -55,13 +55,13 @@ def get_realtime_jwt():
             "aud": "realtime",
             "role": "service_role",
             "iss": f"https://{project_ref}.supabase.co",
+            "exp": int(time.time()) + 60,  # valid 60s
         }
         token = jwt.encode(payload, SUPABASE_SERVICE_KEY, algorithm="HS256")
         return token
     except Exception as e:
         logger.error(f"❌ Failed to create realtime JWT: {e}")
-        return SUPABASE_SERVICE_KEY  # fallback
-
+        return SUPABASE_SERVICE_KEY
 
 # -----------------------------------------------------
 # 🔹 Broadcast Helper (✅ Realtime v2 REST schema)
@@ -79,9 +79,8 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
             ]
         }
 
-        # ✅ New v2 endpoint
         realtime_url = f"{SUPABASE_URL}/realtime/v1/broadcast"
-        realtime_jwt = get_realtime_jwt()  # 🔥 Use JWT for realtime auth
+        realtime_jwt = get_realtime_jwt()  # ✅ Use Realtime JWT instead of raw key
 
         logger.info(f"🌍 Realtime URL = {realtime_url}")
         logger.info(f"📡 Broadcasting {event} → battle_{battle_id}")
@@ -91,7 +90,7 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
             realtime_url,
             headers={
                 "apikey": SUPABASE_SERVICE_KEY,
-                "Authorization": f"Bearer {realtime_jwt}",  # ✅ Correct JWT now
+                "Authorization": f"Bearer {realtime_jwt}",  # ✅ Fixed here
                 "Content-Type": "application/json",
             },
             json=body,
