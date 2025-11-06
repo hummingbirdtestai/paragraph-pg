@@ -112,7 +112,7 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
             realtime_url,
             headers={
                 "apikey": SUPABASE_SERVICE_KEY,
-                "Authorization": f"Bearer {realtime_jwt}",
+                "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
                 "Content-Type": "application/json",
             },
             json=body,
