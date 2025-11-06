@@ -55,12 +55,11 @@ def get_realtime_jwt():
         payload = {
             "aud": "supabase_realtime",
             "role": "service_role",
-            "sub": "service_role",
             "iss": f"https://{project_ref}.supabase.co",
             "exp": int(time.time()) + 60,  # valid 60s
         }
-        # ✅ Sign token with SUPABASE_JWT_SECRET (NOT service key)
-        token = jwt.encode(payload, SUPABASE_JWT_SECRET, algorithm="HS256")
+        # ✅ Sign token with SUPABASE_SERVICE_KEY (the service role key))
+        token = jwt.encode(payload, SUPABASE_SERVICE_KEY, algorithm="HS256")
         return token
     except Exception as e:
         logger.error(f"❌ Failed to create realtime JWT: {e}")
