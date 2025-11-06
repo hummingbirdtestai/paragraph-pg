@@ -28,6 +28,7 @@ logger = logging.getLogger("battle_api")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
+SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")  # ✅ NEW — from “Legacy JWT Secret”
 
 # 🔍 Sanity check
 if not SUPABASE_SERVICE_KEY:
@@ -57,7 +58,8 @@ def get_realtime_jwt():
             "iss": f"https://{project_ref}.supabase.co",
             "exp": int(time.time()) + 60,  # valid 60s
         }
-        token = jwt.encode(payload, SUPABASE_SERVICE_KEY, algorithm="HS256")
+        # ✅ Sign token with SUPABASE_JWT_SECRET (NOT service key)
+        token = jwt.encode(payload, SUPABASE_JWT_SECRET, algorithm="HS256")
         return token
     except Exception as e:
         logger.error(f"❌ Failed to create realtime JWT: {e}")
@@ -80,7 +82,7 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
         }
 
         realtime_url = f"{SUPABASE_URL}/realtime/v1/broadcast"
-        realtime_jwt = get_realtime_jwt()  # ✅ Use Realtime JWT instead of raw key
+        realtime_jwt = get_realtime_jwt()  # ✅ Use correct JWT
 
         logger.info(f"🌍 Realtime URL = {realtime_url}")
         logger.info(f"📡 Broadcasting {event} → battle_{battle_id}")
@@ -90,7 +92,7 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
             realtime_url,
             headers={
                 "apikey": SUPABASE_SERVICE_KEY,
-                "Authorization": f"Bearer {realtime_jwt}",  # ✅ Fixed here
+                "Authorization": f"Bearer {realtime_jwt}",
                 "Content-Type": "application/json",
             },
             json=body,
