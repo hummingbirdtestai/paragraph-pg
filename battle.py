@@ -58,8 +58,22 @@ def get_realtime_jwt():
             "iss": f"https://{project_ref}.supabase.co",
             "exp": int(time.time()) + 60,  # valid 60s
         }
-        # ✅ Sign token with SUPABASE_SERVICE_KEY (the service role key))
-        token = jwt.encode(payload, SUPABASE_SERVICE_KEY, algorithm="HS256")
+
+        # ⚙️ TEMPORARY DEBUG LOGS
+        signing_key = SUPABASE_SERVICE_KEY  # or change manually to SUPABASE_JWT_SECRET when testing
+        token = jwt.encode(payload, signing_key, algorithm="HS256")
+
+        logger.info("🔐 Generated Realtime JWT payload:")
+        logger.info(json.dumps(payload, indent=2))
+        logger.info(f"🔏 Using key: {'SERVICE_ROLE_KEY' if signing_key == SUPABASE_SERVICE_KEY else 'JWT_SECRET'}")
+        logger.info(f"🔑 JWT sample (first 80 chars): {token[:80]}...")
+
+        try:
+            decoded_check = jwt.decode(token, signing_key, algorithms=["HS256"])
+            logger.info(f"🧩 Local verify → OK, aud={decoded_check.get('aud')}")
+        except Exception as verify_err:
+            logger.error(f"❌ Local verification failed → {verify_err}")
+
         return token
     except Exception as e:
         logger.error(f"❌ Failed to create realtime JWT: {e}")
@@ -87,6 +101,12 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
         logger.info(f"🌍 Realtime URL = {realtime_url}")
         logger.info(f"📡 Broadcasting {event} → battle_{battle_id}")
         logger.info(f"🧠 Payload = {json.dumps(body, indent=2)}")
+        logger.info(f"🔧 Headers preview:")
+        logger.info(json.dumps({
+            "apikey": "SERVICE_ROLE_KEY...",
+            "Authorization": f"Bearer {realtime_jwt[:40]}...",
+            "Content-Type": "application/json"
+        }, indent=2))
 
         res = requests.post(
             realtime_url,
@@ -100,6 +120,7 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
         )
 
         logger.info(f"📡 [{battle_id}] Broadcast → {event} (status={res.status_code})")
+        logger.warning(f"🧾 Response body: {res.text}")
         if res.status_code != 200:
             logger.warning(f"❌ Broadcast failed → {res.text}")
         else:
@@ -110,7 +131,6 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
         logger.error(f"💥 Broadcast failed ({event}): {e}")
         return False
 
-
 # -----------------------------------------------------
 # 🔹 Root Endpoint
 # -----------------------------------------------------
@@ -118,7 +138,6 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
 async def root():
     logger.info("🌐 Health check hit: /")
     return {"status": "Battle API running ✅"}
-
 
 # -----------------------------------------------------
 # 🔹 Utility Endpoints
@@ -136,7 +155,6 @@ async def get_battle_stats(mcq_id: str):
         logger.error(f"💥 get_battle_stats failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.post("/battle/leaderboard")
 async def get_leaderboard(battle_id: str):
     logger.info(f"🏆 get_leaderboard called with battle_id={battle_id}")
@@ -149,7 +167,6 @@ async def get_leaderboard(battle_id: str):
     except Exception as e:
         logger.error(f"💥 get_leaderboard failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 # -----------------------------------------------------
 # 🔹 Battle Start Endpoint
@@ -198,7 +215,6 @@ async def start_battle(battle_id: str, background_tasks: BackgroundTasks):
         logger.error(f"💥 start_battle failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 # -----------------------------------------------------
 # 🔹 Grace Expiry Handler
 # -----------------------------------------------------
@@ -223,7 +239,6 @@ def expire_battle_if_empty(battle_id: str):
         broadcast_event(battle_id, "battle_end", {"message": "No players joined. Battle expired."})
     else:
         logger.info(f"🎮 Players joined during grace period → {len(participants)} participants")
-
 
 # -----------------------------------------------------
 # 🔹 Main Orchestrator Loop
