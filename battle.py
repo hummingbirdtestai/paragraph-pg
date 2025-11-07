@@ -208,9 +208,7 @@ async def start_battle(battle_id: str, background_tasks: BackgroundTasks):
             {"status": "Active"}
         ).eq("battle_id", battle_id).execute()
 
-        broadcast_event(battle_id, "battle_start", {"message": "🚀 Battle starting..."})
-        await asyncio.sleep(3)  # give everyone time to subscribe
-        broadcast_event(battle_id, "new_question", mcq)
+        broadcast_event(battle_id, "battle_start", {"message": "🚀 Battle started instantly"})
         background_tasks.add_task(run_battle_sequence, battle_id)
         logger.info(f"✅ Instant start triggered for battle_id={battle_id}")
         return {"success": True, "message": f"Battle {battle_id} orchestrator launched instantly"}
