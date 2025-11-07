@@ -107,7 +107,7 @@ def broadcast_event(battle_id: str, event: str, payload: dict):
         realtime_jwt = get_realtime_jwt()  # ✅ Use correct JWT
 
         logger.info(f"🌍 Realtime URL = {realtime_url}")
-        logger.info(f"📡 Broadcasting {event} → battle_{battle_id}")
+        logger.info(f"📡 Broadcasting {event} → battle:{battle_id}")
         logger.info(f"🧠 Payload = {json.dumps(body, indent=2)}")
         logger.info(f"🔧 Headers preview:")
         logger.info(json.dumps({
