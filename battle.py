@@ -86,17 +86,22 @@ def get_realtime_jwt():
 # 🔹 Broadcast Helper (✅ Realtime v2 REST schema)
 # -----------------------------------------------------
 def broadcast_event(battle_id: str, event: str, payload: dict):
-    """Send broadcast event to Supabase Realtime channel (v2 format)."""
+    """Send broadcast event to Supabase Realtime channel (v2 format, normalized)."""
     try:
+        # ✅ NORMALIZED BODY STRUCTURE — matches client .on('broadcast')
         body = {
             "messages": [
                 {
                     "topic": f"battle:{battle_id}",
-                    "event": event,
-                    "payload": payload,
+                    "event": "broadcast",   # <— always “broadcast” (NOT the event name)
+                    "payload": {
+                        "type": event,      # <— your actual event type (new_question, show_stats, etc.)
+                        "data": payload     # <— event data goes inside “data”
+                    },
                 }
             ]
         }
+
 
         realtime_url = f"{SUPABASE_URL}/realtime/v1/api/broadcast"
         realtime_jwt = get_realtime_jwt()  # ✅ Use correct JWT
