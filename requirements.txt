@@ -6,3 +6,7 @@ requests
 openai
 httpx
 starlette
+langchain
+langchain-community
+langchain-openai
+psycopg2-binary
