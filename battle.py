@@ -251,10 +251,11 @@ async def run_battle_sequence(battle_id: str):
         while current.data:
             mcq = current.data[0]
             react_order = mcq.get("react_order", 0)
+            total_mcqs = mcq.get("total_mcqs", 0)
             mcq_id = mcq["mcq_id"]
 
             broadcast_event(battle_id, "new_question", mcq)
-            logger.info(f"🧩 Battle {battle_id} → Q{react_order} started")
+            logger.info(f"🧩 Battle {battle_id} → Q{react_order}/{total_mcqs} started")
 
             await asyncio.sleep(20)
             # 🔧 CHANGE: flatten payload from list to object
@@ -277,6 +278,17 @@ async def run_battle_sequence(battle_id: str):
                 {"battle_id_input": battle_id, "react_order_input": react_order},
             ).execute()
 
+            if next_q.data:
+                next_mcq = next_q.data[0]
+                total_mcqs = next_mcq.get("total_mcqs", 0)   # ✅ NEW
+                react_order_next = next_mcq.get("react_order", 0)
+                mcq_id_next = next_mcq["mcq_id"]
+            
+                broadcast_event(battle_id, "new_question", next_mcq)
+                logger.info(f"🧩 Next question → Q{react_order_next}/{total_mcqs}")
+                current = next_q
+                continue  # optional safety, explicit loop continue
+
             if not next_q.data:
                 supabase.table("battle_schedule").update(
                     {"status": "Completed"}
@@ -284,8 +296,6 @@ async def run_battle_sequence(battle_id: str):
                 broadcast_event(battle_id, "battle_end", {"message": "Battle completed 🏁"})
                 logger.info(f"✅ Battle {battle_id} completed.")
                 break
-
-            current = next_q
 
     except Exception as e:
         logger.error(f"💥 Orchestrator error for {battle_id}: {e}")
