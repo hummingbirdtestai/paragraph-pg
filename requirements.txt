@@ -9,10 +9,7 @@ requests
 httpx
 
 # --- Database / Supabase (modular SDK for Python 3.12+) ---
-postgrest-py>=0.15.0
-gotrue>=2.3.2
-storage3>=0.6.0
-supafunc>=0.3.0
+supabase>=2.3.4
 psycopg2-binary
 pandas
 
@@ -24,3 +21,4 @@ langchain-experimental>=0.0.56
 
 # --- Visualization (optional) ---
 matplotlib
+
