@@ -1,0 +1,1 @@
+# makes analytics a package
