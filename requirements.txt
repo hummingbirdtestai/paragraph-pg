@@ -8,8 +8,11 @@ python-dotenv
 requests
 httpx
 
-# --- Database / Supabase ---
-supabase-py        # ✅ correct PyPI package name (not just "supabase")
+# --- Database / Supabase (modular SDK for Python 3.12+) ---
+postgrest-py>=0.15.0
+gotrue>=2.3.2
+storage3>=0.6.0
+supafunc>=0.3.0
 psycopg2-binary
 pandas
 
