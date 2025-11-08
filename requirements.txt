@@ -1,13 +1,23 @@
+# --- Core Web Framework ---
 fastapi
 uvicorn[standard]
 starlette
+
+# --- Environment & HTTP Utilities ---
 python-dotenv
 requests
 httpx
-supabase
+
+# --- Database / Supabase ---
+supabase-py        # ✅ correct PyPI package name (not just "supabase")
 psycopg2-binary
 pandas
+
+# --- LangChain + OpenAI Ecosystem ---
 langchain>=0.2.0
 langchain-community>=0.2.0
 langchain-openai>=0.2.0
+langchain-experimental>=0.0.56
+
+# --- Visualization (optional) ---
 matplotlib
