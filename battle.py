@@ -197,16 +197,30 @@ async def start_battle(battle_id: str, background_tasks: BackgroundTasks):
         participants = participants_resp.data or []
         logger.info(f"👥 Joined players count = {len(participants)}")
 
-        if battle_id in active_battles:
-            logger.warning(f"⚠ Battle {battle_id} already running")
-            return {"success": False, "message": "Already running"}
+        # 🔒 Step 1: check if orchestrator already started
+        status_resp = (
+            supabase.table("battle_schedule")
+            .select("status")
+            .eq("battle_id", battle_id)
+            .single()
+            .execute()
+        )
 
-        active_battles.add(battle_id)
+        current_status = status_resp.data.get("status") if status_resp.data else None
+        logger.info(f"📋 Current battle status for {battle_id} = {current_status}")
 
-        # 🚀 Start immediately even if no participants joined
+        # If already active or completed, skip
+        if current_status and current_status.lower() in ["active", "completed"]:
+            logger.warning(f"⚠ Battle {battle_id} already active or done — skipping new orchestrator")
+            return {"success": False, "message": "Battle already started or finished"}
+
+        # ✅ Step 2: mark as active immediately (atomic lock)
         supabase.table("battle_schedule").update(
             {"status": "Active"}
         ).eq("battle_id", battle_id).execute()
+
+        # ✅ Step 3: also mark in memory to avoid duplicates during same process
+        active_battles.add(battle_id)
 
         broadcast_event(battle_id, "battle_start", {"message": "🚀 Battle started instantly"})
         background_tasks.add_task(run_battle_sequence, battle_id)
