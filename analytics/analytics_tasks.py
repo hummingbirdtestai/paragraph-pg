@@ -4,14 +4,24 @@ from analytics.langchain_engine import analytics_chain
 router = APIRouter(prefix="/analytics", tags=["Analytics"])
 
 @router.get("/practice")
-def generate_practice_analytics(student_id: str = Query(...)):
-    query = f"""
-    For student_id='{student_id}', analyze the last 7 days from student_phase_pointer table:
-    1. Total concepts completed, total MCQs attempted, accuracy trends.
-    2. Subject-wise time spent.
-    3. Common mistakes.
-    4. 3 actionable revision suggestions.
-    Generate concise mentor-style commentary.
+def generate_completion_analytics(student_id: str = Query(...)):
     """
+    For a given student_id, analyze student_phase_pointer table to find:
+    - Number of concepts completed in the last 10 days
+    - Number of MCQs completed in the last 10 days
+    """
+    query = f"""
+    For student_id='{student_id}', query the student_phase_pointer table and calculate:
+    1. The total count of rows where phase_type='concept' and is_completed=true 
+       within the past 10 days based on end_time.
+    2. The total count of rows where phase_type='mcq' and is_completed=true 
+       within the past 10 days based on end_time.
+    Return the results in JSON format with keys:
+       'concepts_completed' and 'mcqs_completed'.
+    """
+
     result = analytics_chain.run(query)
-    return {"student_id": student_id, "mentor_commentary": result}
+    return {
+        "student_id": student_id,
+        "completion_summary": result
+    }
