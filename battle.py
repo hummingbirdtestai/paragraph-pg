@@ -179,12 +179,13 @@ async def get_leaderboard(battle_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 # -----------------------------------------------------
-# 🔹 Battle Start Endpoint
+# 🔹 Battle Start Endpoint (improved with resume logic)
 # -----------------------------------------------------
 @app.post("/battle/start/{battle_id}")
 async def start_battle(battle_id: str, background_tasks: BackgroundTasks):
     logger.info(f"🚀 /battle/start called for battle_id={battle_id}")
     try:
+        # 1️⃣ Fetch current participants
         logger.info(f"🔍 Fetching participants from Supabase for {battle_id}")
         participants_resp = (
             supabase.table("battle_participants")
@@ -193,11 +194,10 @@ async def start_battle(battle_id: str, background_tasks: BackgroundTasks):
             .eq("status", "joined")
             .execute()
         )
-
         participants = participants_resp.data or []
         logger.info(f"👥 Joined players count = {len(participants)}")
 
-        # 🔒 Step 1: check if orchestrator already started
+        # 2️⃣ Fetch current battle status
         status_resp = (
             supabase.table("battle_schedule")
             .select("status")
@@ -205,31 +205,60 @@ async def start_battle(battle_id: str, background_tasks: BackgroundTasks):
             .single()
             .execute()
         )
-
         current_status = status_resp.data.get("status") if status_resp.data else None
         logger.info(f"📋 Current battle status for {battle_id} = {current_status}")
 
-        # If already active or completed, skip
-        if current_status and current_status.lower() in ["active", "completed"]:
-            logger.warning(f"⚠ Battle {battle_id} already active or done — skipping new orchestrator")
-            return {"success": False, "message": "Battle already started or finished"}
+        # -----------------------------------------------------
+        # 🧩 CASE 1 — Battle is already Active but orchestrator alive
+        # -----------------------------------------------------
+        if current_status and current_status.lower() == "active" and battle_id in active_battles:
+            logger.info(f"🔁 Battle {battle_id} already running — user can join ongoing flow.")
+            broadcast_event(
+                battle_id,
+                "battle_resume",
+                {"message": "🔁 A new player joined an active battle — continuing broadcast."},
+            )
+            return {"success": True, "message": "Joined ongoing battle successfully"}
 
-        # ✅ Step 2: mark as active immediately (atomic lock)
+        # -----------------------------------------------------
+        # 🧩 CASE 2 — Battle is Active in DB but orchestrator missing (zombie)
+        # -----------------------------------------------------
+        if current_status and current_status.lower() == "active" and battle_id not in active_battles:
+            logger.warning(f"⚠ Battle {battle_id} marked Active in DB but orchestrator not running — restarting.")
+            active_battles.add(battle_id)
+            background_tasks.add_task(run_battle_sequence, battle_id)
+            broadcast_event(
+                battle_id,
+                "battle_resume",
+                {"message": "♻️ Orchestrator resumed automatically"},
+            )
+            return {"success": True, "message": "Battle resumed successfully"}
+
+        # -----------------------------------------------------
+        # 🧩 CASE 3 — Battle is Completed
+        # -----------------------------------------------------
+        if current_status and current_status.lower() == "completed":
+            logger.info(f"🏁 Battle {battle_id} already completed — skipping orchestrator")
+            return {"success": False, "message": "Battle already finished"}
+
+        # -----------------------------------------------------
+        # 🧩 CASE 4 — Normal fresh start
+        # -----------------------------------------------------
         supabase.table("battle_schedule").update(
             {"status": "Active"}
         ).eq("battle_id", battle_id).execute()
 
-        # ✅ Step 3: also mark in memory to avoid duplicates during same process
         active_battles.add(battle_id)
-
         broadcast_event(battle_id, "battle_start", {"message": "🚀 Battle started instantly"})
         background_tasks.add_task(run_battle_sequence, battle_id)
         logger.info(f"✅ Instant start triggered for battle_id={battle_id}")
+
         return {"success": True, "message": f"Battle {battle_id} orchestrator launched instantly"}
 
     except Exception as e:
         logger.error(f"💥 start_battle failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 
