@@ -6,26 +6,39 @@ router = APIRouter(prefix="/analytics", tags=["Analytics"])
 @router.get("/practice")
 def generate_inspirational_comment(student_id: str = Query(...)):
     """
-    Analyze student_phase_pointer table and generate mentor-style commentary
+    Analyze the student_phase_pointer table and generate a mentor-style commentary
     for NEET-PG preparation progress.
+    The LLM is expected to run SQL, interpret the results, and write JSON feedback.
     """
+
     query = f"""
-    For student_id='{student_id}', query the student_phase_pointer table to determine:
-    1. Number of concepts completed in the past 10 days 
-       (phase_type='concept' AND is_completed=true).
-    2. Number of MCQs completed in the past 10 days 
-       (phase_type='mcq' AND is_completed=true).
+    You have access to a PostgreSQL table named student_phase_pointer
+    with the following relevant columns:
+    (student_id, phase_type, is_completed, start_time, end_time).
 
-    Then, based on these results, write a concise and motivating mentor-style commentary
-    about the student's NEET-PG preparation — highlighting pace, focus, and improvement areas.
-    Use an encouraging yet constructive tone, like a senior mentor guiding the student.
+    Step 1️⃣ — Run the following SQL query:
+    SELECT
+      SUM(CASE WHEN phase_type = 'concept' AND is_completed = true
+               AND end_time > NOW() - INTERVAL '10 days' THEN 1 ELSE 0 END) AS concepts_completed,
+      SUM(CASE WHEN phase_type = 'mcq' AND is_completed = true
+               AND end_time > NOW() - INTERVAL '10 days' THEN 1 ELSE 0 END) AS mcqs_completed
+    FROM student_phase_pointer
+    WHERE student_id = '{student_id}';
 
-    Return the response strictly as JSON with:
+    Step 2️⃣ — Interpret the result to understand the student's recent progress
+    in NEET-PG preparation (concepts learned, MCQs practiced).
+
+    Step 3️⃣ — Write a short, mentor-style feedback paragraph that:
+      - Highlights their pace, focus, and consistency.
+      - Points out one area of improvement.
+      - Sounds encouraging yet critically constructive, like an experienced NEET-PG mentor.
+
+    Step 4️⃣ — Return the output strictly as **valid JSON** in the format below:
     {{
-      "student_id": "<id>",
+      "student_id": "{student_id}",
       "concepts_completed": <integer>,
       "mcqs_completed": <integer>,
-      "mentor_commentary": "<motivational paragraph>"
+      "mentor_commentary": "<short motivational feedback paragraph>"
     }}
     """
 
