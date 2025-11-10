@@ -249,18 +249,26 @@ async def start_battle(battle_id: str, background_tasks: BackgroundTasks):
         ).eq("battle_id", battle_id).execute()
 
         active_battles.add(battle_id)
-        broadcast_event(battle_id, "battle_start", {"message": "🚀 Battle started instantly"})
+        broadcast_event(
+            battle_id,
+            "battle_start_pending",
+            {"message": "⚔️ Battle will begin shortly (5 s buffer for late joiners)"},
+        )
+        
+        # 🕔 Backend buffer — allow all clients to subscribe
+        logger.info(f"⏳ Delaying orchestrator start by 5 seconds for {battle_id}...")
+        await asyncio.sleep(5)
+        logger.info(f"🕒 Buffer window active — waiting for all participants to subscribe before launch.")
+        
+        broadcast_event(battle_id, "battle_start", {"message": "🚀 Battle officially started"})
         background_tasks.add_task(run_battle_sequence, battle_id)
-        logger.info(f"✅ Instant start triggered for battle_id={battle_id}")
-
-        return {"success": True, "message": f"Battle {battle_id} orchestrator launched instantly"}
+        logger.info(f"✅ Buffered start triggered for battle_id={battle_id}")
+        
+        return {"success": True, "message": f"Battle {battle_id} will start after 5 s buffer"}
 
     except Exception as e:
         logger.error(f"💥 start_battle failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
-
 
 # -----------------------------------------------------
 # 🔹 Main Orchestrator Loop
