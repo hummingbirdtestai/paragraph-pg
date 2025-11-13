@@ -88,7 +88,7 @@ async def orchestrate(request: Request):
             print(f"⚠️ Failed to fetch/append message: {e}")
             return {"error": "❌ Conversation log fetch failed"}
 
-        # ✅ Mentor prompt
+        # 🧠 Mentor prompt
         prompt = """
 You are a senior NEET-PG mentor with 30 years’ experience.
 Guide the student concisely, in Markdown with Unicode symbols, ≤150 words.
@@ -149,7 +149,7 @@ and emojis (💡🧠⚕️📘) naturally. Do NOT output code blocks or JSON.
         }
 
     # ───────────────────────────────
-    # 🔖 4️⃣ BOOKMARK REVIEW FLOW (concepts)
+    # 🔖 4️⃣ BOOKMARK REVIEW FLOW
     # ───────────────────────────────
     elif action == "bookmark_review":
         rpc_data = call_rpc("get_first_bookmarked_phase", {
@@ -189,16 +189,15 @@ and emojis (💡🧠⚕️📘) naturally. Do NOT output code blocks or JSON.
         return {"bookmarked_concepts": [rpc_data]}
 
     # ───────────────────────────────
-    # 🟣 5️⃣ BOOKMARK REVIEW CHAT — GPT chat during bookmarked concept review
+    # 🟣 5️⃣ BOOKMARK REVIEW CHAT
     # ───────────────────────────────
     elif action == "bookmark_review_chat":
         phase_type = payload.get("phase_type", "concept")
         bookmark_updated_time = payload.get("bookmark_updated_time")
-        phase_json = payload.get("phase_json")  # ✅ capture from frontend
+        phase_json = payload.get("phase_json")
 
         print(f"💬 bookmark_review_chat → phase_type={phase_type}, time={bookmark_updated_time}")
 
-        # 1️⃣ Get last conversation for this student/subject
         convo_log = []
         try:
             res = (
@@ -215,10 +214,8 @@ and emojis (💡🧠⚕️📘) naturally. Do NOT output code blocks or JSON.
 
             if res.data:
                 chat_row = res.data[0]
-                chat_id = chat_row["id"]
                 convo_log = chat_row.get("conversation_log", [])
             else:
-                # New chat row if none exists
                 insert_res = (
                     supabase.table("concept_review_bookmarks_chat")
                     .insert({
@@ -226,30 +223,25 @@ and emojis (💡🧠⚕️📘) naturally. Do NOT output code blocks or JSON.
                         "subject_id": subject_id,
                         "phase_type": phase_type,
                         "phase_json": phase_json,
-                        "bookmark_updated_time": bookmark_updated_time, # ✅ added here
+                        "bookmark_updated_time": bookmark_updated_time,
                         "conversation_log": [],
                         "created_at": datetime.utcnow().isoformat() + "Z",
                     })
                     .execute()
                 )
-                chat_id = insert_res.data[0]["id"] if insert_res.data else None
         except Exception as e:
             print(f"⚠️ DB fetch/insert failed: {e}")
             return {"error": "DB fetch failed"}
 
-        # ✅ If no message provided → just return existing conversation
         if not message:
-            print("ℹ️ No message → returning existing conversation only")
             return {"existing_conversation": convo_log}
 
-        # 2️⃣ Append student message
         convo_log.append({
             "role": "student",
             "content": message,
             "ts": datetime.utcnow().isoformat() + "Z",
         })
 
-        # 3️⃣ Generate mentor reply via GPT
         prompt = """
 You are a senior NEET-PG mentor with 30 years’ experience.
 Guide the student concisely, in Markdown with Unicode symbols, ≤150 words.
@@ -257,14 +249,7 @@ Use headings, **bold**, _italic_, arrows (→, ↑, ↓), subscripts/superscript
 and emojis (💡🧠⚕️📘) naturally. Do NOT output code blocks or JSON.
 """
 
-        mentor_reply = "⚠️ Temporary glitch — please retry."
-        gpt_status = "failed"
-        try:
-            mentor_reply = chat_with_gpt(prompt, convo_log)
-            if isinstance(mentor_reply, str):
-                gpt_status = "success"
-        except Exception as e:
-            print(f"❌ GPT call failed: {e}")
+        mentor_reply = chat_with_gpt(prompt, convo_log)
 
         convo_log.append({
             "role": "assistant",
@@ -272,7 +257,6 @@ and emojis (💡🧠⚕️📘) naturally. Do NOT output code blocks or JSON.
             "ts": datetime.utcnow().isoformat() + "Z",
         })
 
-        # 4️⃣ Update the conversation_log back into table
         try:
             supabase.table("concept_review_bookmarks_chat") \
                 .update({
@@ -285,19 +269,76 @@ and emojis (💡🧠⚕️📘) naturally. Do NOT output code blocks or JSON.
                 .eq("bookmark_updated_time", bookmark_updated_time)\
                 .execute()
         except Exception as e:
-            print(f"⚠️ DB update failed: {e}")
+            print(f"⚠️ DB update failed")
 
-        # 5️⃣ Return GPT reply to frontend
         return {
             "mentor_reply": mentor_reply,
-            "gpt_status": gpt_status,
+            "gpt_status": "success",
         }
+
+
+    # ───────────────────────────────
+    # 🆕 6️⃣ WRONG MCQs — START
+    # ───────────────────────────────
+    elif action == "wrong_mcqs_start":
+        print("🔎 Fetching FIRST wrong MCQ...")
+
+        query = (
+            supabase.table("student_phase_pointer")
+            .select("*")
+            .eq("student_id", student_id)
+            .eq("subject_id", subject_id)
+            .eq("phase_type", "mcq")
+            .eq("is_correct", False)
+            .order("react_order_final", asc=True)
+            .limit(1)
+            .execute()
+        )
+
+        if not query.data:
+            print("⚠️ No wrong MCQs found")
+            return {"wrong_mcqs": []}
+
+        first = query.data[0]
+
+        return {"wrong_mcqs": [first]}
+
+
+    # ───────────────────────────────
+    # 🆕 7️⃣ WRONG MCQs — NEXT
+    # ───────────────────────────────
+    elif action == "wrong_mcqs_next":
+        current_order = payload.get("react_order_final")
+        print(f"⏭ Getting next wrong MCQ after react_order={current_order}")
+
+        query = (
+            supabase.table("student_phase_pointer")
+            .select("*")
+            .eq("student_id", student_id)
+            .eq("subject_id", subject_id)
+            .eq("phase_type", "mcq")
+            .eq("is_correct", False)
+            .gt("react_order_final", current_order)
+            .order("react_order_final", asc=True)
+            .limit(1)
+            .execute()
+        )
+
+        if not query.data:
+            print("⚠️ No more wrong MCQs")
+            return {"wrong_mcqs": []}
+
+        next_row = query.data[0]
+
+        return {"wrong_mcqs": [next_row]}
+
 
     # ───────────────────────────────
     # ❌ Unknown action
     # ───────────────────────────────
     else:
         return {"error": f"Unknown action '{action}'"}
+
 
 
 # ───────────────────────────────────────────────
@@ -346,7 +387,4 @@ async def submit_answer(request: Request):
 # ───────────────────────────────────────────────
 @app.get("/")
 def home():
-    return {"message": "🧠 Paragraph Orchestra API (bookmark review + chat intent) is live!"}
-
-
-
+    return {"message": "🧠 Paragraph Orchestra API (bookmark review + chat intent + wrong mcqs) is live!"}
