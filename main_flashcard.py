@@ -8,7 +8,7 @@ import json, uuid
 # ───────────────────────────────────────────────
 # Initialize FastAPI app
 # ───────────────────────────────────────────────
-app = FastAPI(title="Flashcard Orchestra API", version="4.0.0")
+app = FastAPI(title="Flashcard Orchestra API", version="4.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -180,43 +180,28 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
         }
 
     # ======================================================
-    # 4️⃣ REVIEW COMPLETED FLASHCARDS — START
+    # 4️⃣ REVIEW COMPLETED FLASHCARDS — START (🔁 via RPC)
     # ======================================================
     elif action == "review_completed_start_flashcard":
-        print("🔍 Fetching first completed flashcard…")
-
-        res = (
-            supabase.table("student_flashcard_pointer")
-            .select("*")
-            .eq("student_id", student_id)
-            .eq("subject_id", subject_id)
-            .eq("is_completed", True)
-            .order("react_order_final", desc=False)
-            .limit(1)
-            .execute()
-        )
-
-        return {"review_item": make_json_safe(res.data[0]) if res.data else None}
+        print("🔍 Fetching first completed flashcard via RPC…")
+        rpc_data = call_rpc("review_completed_start_flashcard", {
+            "p_student_id": student_id,
+            "p_subject_id": subject_id
+        })
+        return {"review_item": make_json_safe(rpc_data) if rpc_data else None}
 
     # ======================================================
-    # 5️⃣ REVIEW COMPLETED FLASHCARDS — NEXT
+    # 5️⃣ REVIEW COMPLETED FLASHCARDS — NEXT (🔁 via RPC)
     # ======================================================
     elif action == "review_completed_next_flashcard":
         current_order = payload.get("react_order_final")
-
-        res = (
-            supabase.table("student_flashcard_pointer")
-            .select("*")
-            .eq("student_id", student_id)
-            .eq("subject_id", subject_id)
-            .eq("is_completed", True)
-            .gt("react_order_final", current_order)
-            .order("react_order_final", desc=False)
-            .limit(1)
-            .execute()
-        )
-
-        return {"review_item": make_json_safe(res.data[0]) if res.data else None}
+        print(f"⏭ Fetching next completed flashcard after order {current_order}…")
+        rpc_data = call_rpc("review_completed_next_flashcard", {
+            "p_student_id": student_id,
+            "p_subject_id": subject_id,
+            "p_react_order_final": current_order
+        })
+        return {"review_item": make_json_safe(rpc_data) if rpc_data else None}
 
     # ======================================================
     # 6️⃣ BOOKMARK REVIEW — START
@@ -254,8 +239,8 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
 
 
 # ───────────────────────────────────────────────
-# Health
+# Health Check
 # ───────────────────────────────────────────────
 @app.get("/")
 def home():
-    return {"message": "🧠 Flashcard Orchestra API v4.0 is running!"}
+    return {"message": "🧠 Flashcard Orchestra API v4.1 running with enriched review flow ✅"}
