@@ -167,7 +167,7 @@ Guide the student concisely, in Markdown with Unicode symbols.
             .eq("student_id", student_id)
             .eq("subject_id", subject_id)
             .eq("is_completed", True)
-            .order("react_order_final", ascending=True)
+            .order("react_order_final", desc=False)
             .limit(1)
             .execute()
         )
@@ -187,7 +187,7 @@ Guide the student concisely, in Markdown with Unicode symbols.
             .eq("subject_id", subject_id)
             .eq("is_completed", True)
             .gt("react_order_final", current_order)
-            .order("react_order_final", ascending=True)
+            .order("react_order_final", desc=False)
             .limit(1)
             .execute()
         )
@@ -204,7 +204,7 @@ Guide the student concisely, in Markdown with Unicode symbols.
             .eq("subject_id", subject_id)
             .eq("phase_type", "mcq")
             .eq("is_correct", False)
-            .order("react_order_final", asc=True)
+            .order("react_order_final", desc=False)
             .limit(1)
             .execute()
         )
@@ -224,7 +224,7 @@ Guide the student concisely, in Markdown with Unicode symbols.
             .eq("phase_type", "mcq")
             .eq("is_correct", False)
             .gt("react_order_final", current_order)
-            .order("react_order_final", asc=True)
+            .order("react_order_final", desc=False)
             .limit(1)
             .execute()
         )
@@ -281,4 +281,5 @@ async def submit_answer(request: Request):
 @app.get("/")
 def home():
     return {"message": "🧠 Paragraph API with review_upto & wrong MCQs active!"}
+
 
