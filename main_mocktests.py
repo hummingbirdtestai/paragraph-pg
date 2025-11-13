@@ -188,14 +188,14 @@ Student’s question: {message}
                         "exam_serial": exam_serial,
                         "mcq_id": mcq_id,
                         "phase_json": json.dumps({"stem": stem_text}),
-                        "conversation_log": json.dumps(convo_log),
+                        "conversation_log": convo_log,
                         "created_at": datetime.utcnow().isoformat() + "Z",
                     }
                     supabase.table("mock_test_review_conversation").insert(insert_data).execute()
                     print("🟢 Inserted new review conversation row.")
                 else:
                     supabase.table("mock_test_review_conversation").update({
-                        "conversation_log": json.dumps(convo_log),
+                        "conversation_log": convo_log,
                         "updated_at": datetime.utcnow().isoformat() + "Z",
                     }).eq("id", existing["id"]).execute()
                     print("🟡 Updated existing review conversation row.")
