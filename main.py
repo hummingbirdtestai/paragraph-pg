@@ -290,7 +290,7 @@ and emojis (💡🧠⚕️📘) naturally. Do NOT output code blocks or JSON.
             .eq("subject_id", subject_id)
             .eq("phase_type", "mcq")
             .eq("is_correct", False)
-            .order("react_order_final", asc=True)
+            .order("react_order_final", desc=False)
             .limit(1)
             .execute()
         )
@@ -319,7 +319,7 @@ and emojis (💡🧠⚕️📘) naturally. Do NOT output code blocks or JSON.
             .eq("phase_type", "mcq")
             .eq("is_correct", False)
             .gt("react_order_final", current_order)
-            .order("react_order_final", asc=True)
+            .order("react_order_final", desc=False)
             .limit(1)
             .execute()
         )
@@ -388,3 +388,4 @@ async def submit_answer(request: Request):
 @app.get("/")
 def home():
     return {"message": "🧠 Paragraph Orchestra API (bookmark review + chat intent + wrong mcqs) is live!"}
+
