@@ -8,9 +8,9 @@ import json, uuid
 # ───────────────────────────────────────────────
 # Initialize FastAPI app
 # ───────────────────────────────────────────────
-app = FastAPI(title="Flashcard Orchestra API", version="3.0.0")
+app = FastAPI(title="Flashcard Orchestra API", version="3.1.0")
 
-# ✅ Allow frontend (Expo / Web / React) to call this API
+# ✅ Allow frontend (Expo / Web / React)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,7 +20,7 @@ app.add_middleware(
 )
 
 # ───────────────────────────────────────────────
-# Helper: make JSON fully serializable (UUID → string)
+# Helper — convert UUID for JSON
 # ───────────────────────────────────────────────
 def _make_json_safe(data):
     if isinstance(data, uuid.UUID):
@@ -33,7 +33,7 @@ def _make_json_safe(data):
 
 
 # ───────────────────────────────────────────────
-# MASTER ENDPOINT — handles all flashcard actions
+# MASTER ENDPOINT
 # ───────────────────────────────────────────────
 @app.post("/flashcard_orchestrate")
 async def flashcard_orchestrate(request: Request):
@@ -45,14 +45,15 @@ async def flashcard_orchestrate(request: Request):
 
     print(f"🎬 Flashcard Action = {action}, Student = {student_id}")
 
-    # ───────────────────────────────
-    # 🟢 1️⃣ START_FLASHCARD
-    # ───────────────────────────────
+    # ───────────────────────────────────────────────
+    # 1️⃣ START_FLASHCARD
+    # ───────────────────────────────────────────────
     if action == "start_flashcard":
         rpc_data = call_rpc("start_flashcard_orchestra", {
             "p_student_id": student_id,
             "p_subject_id": subject_id
         })
+
         if not rpc_data:
             return {"error": "❌ start_flashcard_orchestra RPC failed"}
 
@@ -68,7 +69,7 @@ async def flashcard_orchestrate(request: Request):
                 "p_mentor_reply": safe_mentor_reply
             })
         except Exception as e:
-            print(f"⚠️ RPC update_flashcard_pointer_status failed: {e}")
+            print(f"⚠️ update_flashcard_pointer_status failed: {e}")
 
         return {
             "student_id": student_id,
@@ -82,9 +83,9 @@ async def flashcard_orchestrate(request: Request):
             "total_count": rpc_data.get("total_count")
         }
 
-    # ───────────────────────────────
-    # 🟡 2️⃣ CHAT_FLASHCARD
-    # ───────────────────────────────
+    # ───────────────────────────────────────────────
+    # 2️⃣ CHAT_FLASHCARD
+    # ───────────────────────────────────────────────
     elif action == "chat_flashcard":
         pointer_id = None
         convo_log = []
@@ -98,39 +99,36 @@ async def flashcard_orchestrate(request: Request):
                 .limit(1)
                 .execute()
             )
+
             if not res.data:
-                return {"error": "⚠️ No active flashcard pointer for this student"}
+                return {"error": "⚠️ No active flashcard pointer"}
 
             pointer = res.data[0]
             pointer_id = pointer["pointer_id"]
             convo_log = pointer.get("conversation_log", [])
+
             convo_log.append({
                 "role": "student",
                 "content": message,
                 "ts": datetime.utcnow().isoformat() + "Z"
             })
+
         except Exception as e:
-            print(f"⚠️ Failed to fetch or append student flashcard message: {e}")
-            return {"error": "❌ Failed to fetch pointer or append message"}
+            print(f"⚠️ Chat fetch failed: {e}")
+            return {"error": "⚠️ Chat pointer fetch failed"}
 
         prompt = """
 You are a senior NEET-PG mentor with 30 years’ experience.
-You are helping a student with flashcard-based rapid revision.
-You are given the full flashcard conversation log — a list of chat objects:
-[{ "role": "mentor" | "student", "content": "..." }]
-👉 Reply only to the latest student message.
-🧠 Reply in Markdown using Unicode symbols, ≤100 words, concise and high-yield.
+Reply concisely in ≤100 words using Unicode medical symbols.
 """
+
         mentor_reply = None
         gpt_status = "success"
 
         try:
             mentor_reply = chat_with_gpt(prompt, convo_log)
-            if not isinstance(mentor_reply, str):
-                mentor_reply = str(mentor_reply)
         except Exception as e:
-            print(f"❌ GPT call failed for student {student_id}: {e}")
-            mentor_reply = "⚠️ I'm having a small technical hiccup 🤖. Please try again soon!"
+            mentor_reply = "⚠️ I'm facing a temporary issue. Try again!"
             gpt_status = "failed"
 
         convo_log.append({
@@ -139,31 +137,29 @@ You are given the full flashcard conversation log — a list of chat objects:
             "ts": datetime.utcnow().isoformat() + "Z"
         })
 
-        db_status = "success"
         try:
             supabase.table("student_flashcard_pointer") \
                 .update({"conversation_log": convo_log}) \
                 .eq("pointer_id", pointer_id) \
                 .execute()
         except Exception as e:
-            db_status = "failed"
-            print(f"⚠️ DB update failed for flashcard conversation: {e}")
+            print(f"⚠️ DB update failed: {e}")
 
         return {
             "mentor_reply": mentor_reply,
-            "context_used": True,
-            "db_update_status": db_status,
-            "gpt_status": gpt_status
+            "gpt_status": gpt_status,
+            "db_update_status": "success"
         }
 
-    # ───────────────────────────────
-    # 🔵 3️⃣ NEXT_FLASHCARD
-    # ───────────────────────────────
+    # ───────────────────────────────────────────────
+    # 3️⃣ NEXT_FLASHCARD
+    # ───────────────────────────────────────────────
     elif action == "next_flashcard":
         rpc_data = call_rpc("next_flashcard_orchestra", {
             "p_student_id": student_id,
             "p_subject_id": subject_id
         })
+
         if not rpc_data:
             return {"error": "❌ next_flashcard_orchestra RPC failed"}
 
@@ -179,7 +175,7 @@ You are given the full flashcard conversation log — a list of chat objects:
                 "p_mentor_reply": safe_mentor_reply
             })
         except Exception as e:
-            print(f"⚠️ update_flashcard_pointer_status failed in NEXT: {e}")
+            print(f"⚠️ update_flashcard_pointer_status failed: {e}")
 
         return {
             "student_id": student_id,
@@ -193,21 +189,22 @@ You are given the full flashcard conversation log — a list of chat objects:
             "total_count": rpc_data.get("total_count")
         }
 
-    # ───────────────────────────────
-    # 🟣 4️⃣ START_BOOKMARKED_REVISION
-    # ───────────────────────────────
+    # ───────────────────────────────────────────────
+    # 4️⃣ START_BOOKMARKED_REVISION
+    # ───────────────────────────────────────────────
     elif action == "start_bookmarked_revision":
         rpc_data = call_rpc("get_bookmarked_flashcards", {
             "p_student_id": student_id,
             "p_subject_id": subject_id
         })
+
         if not rpc_data:
             return {"error": "❌ get_bookmarked_flashcards RPC failed"}
 
         safe_data = _make_json_safe(rpc_data)
         element_id = safe_data.get("element_id")
-        chat_log = []
 
+        chat_log = []
         try:
             chat_res = (
                 supabase.table("flashcard_review_bookmarks_chat")
@@ -218,10 +215,12 @@ You are given the full flashcard conversation log — a list of chat objects:
                 .limit(1)
                 .execute()
             )
+
             if chat_res.data:
                 chat_log = chat_res.data[0].get("conversation_log", [])
+
         except Exception as e:
-            print(f"⚠️ Could not fetch review chat: {e}")
+            print(f"⚠️ Review chat fetch failed: {e}")
 
         return {
             **safe_data,
@@ -229,9 +228,9 @@ You are given the full flashcard conversation log — a list of chat objects:
             "conversation_log": chat_log
         }
 
-    # ───────────────────────────────
-    # 🟠 5️⃣ NEXT_BOOKMARKED_FLASHCARD
-    # ───────────────────────────────
+    # ───────────────────────────────────────────────
+    # 5️⃣ NEXT_BOOKMARKED_FLASHCARD
+    # ───────────────────────────────────────────────
     elif action == "next_bookmarked_flashcard":
         last_updated_time = payload.get("last_updated_time")
 
@@ -240,6 +239,7 @@ You are given the full flashcard conversation log — a list of chat objects:
             "p_subject_id": subject_id,
             "p_last_updated_time": last_updated_time
         })
+
         if not rpc_data:
             return {"error": "❌ get_next_bookmarked_flashcard RPC failed"}
 
@@ -257,10 +257,12 @@ You are given the full flashcard conversation log — a list of chat objects:
                 .limit(1)
                 .execute()
             )
+
             if chat_res.data:
                 chat_log = chat_res.data[0].get("conversation_log", [])
+
         except Exception as e:
-            print(f"⚠️ Could not fetch chat in NEXT: {e}")
+            print(f"⚠️ Review NEXT chat fetch failed: {e}")
 
         return {
             **safe_data,
@@ -268,9 +270,9 @@ You are given the full flashcard conversation log — a list of chat objects:
             "conversation_log": chat_log
         }
 
-    # ───────────────────────────────
-    # 🔴 6️⃣ CHAT_REVIEW_FLASHCARD_BOOKMARKS
-    # ───────────────────────────────
+    # ───────────────────────────────────────────────
+    # 6️⃣ CHAT_REVIEW_FLASHCARD_BOOKMARKS
+    # ───────────────────────────────────────────────
     elif action == "chat_review_flashcard_bookmarks":
         subject_id = payload.get("subject_id")
         flashcard_id = payload.get("flashcard_id")
@@ -290,11 +292,13 @@ You are given the full flashcard conversation log — a list of chat objects:
                 .limit(1)
                 .execute()
             )
+
             if res.data:
                 chat_id = res.data[0]["id"]
                 convo_log = res.data[0].get("conversation_log", [])
+
         except Exception as e:
-            print(f"⚠️ Fetch existing chat failed: {e}")
+            print(f"⚠️ Chat fetch failed: {e}")
 
         convo_log.append({
             "role": "student",
@@ -303,19 +307,16 @@ You are given the full flashcard conversation log — a list of chat objects:
         })
 
         prompt = """
-You are a senior NEET-PG mentor with 30 years’ experience.
-You are helping a student with flashcard-based rapid revision.
-You are given the full flashcard conversation log — a list of chat objects:
-[{ "role": "mentor" | "student", "content": "..." }]
-👉 Reply only to the latest student message.
-🧠 Reply in Markdown using Unicode symbols, ≤100 words, concise and high-yield.
+You are a senior NEET-PG mentor. Reply concisely in ≤100 words.
 """
+
         mentor_reply = None
         gpt_status = "success"
+
         try:
             mentor_reply = chat_with_gpt(prompt, convo_log)
-        except Exception as e:
-            mentor_reply = "⚠️ I'm facing a small technical hiccup 🤖. Please try again!"
+        except:
+            mentor_reply = "⚠️ Technical issue. Try again!"
             gpt_status = "failed"
 
         convo_log.append({
@@ -339,23 +340,64 @@ You are given the full flashcard conversation log — a list of chat objects:
                     "conversation_log": convo_log
                 }).execute()
         except Exception as e:
-            print(f"⚠️ DB insert/update failed: {e}")
+            print(f"⚠️ DB write failed: {e}")
 
         return {
             "mentor_reply": mentor_reply,
-            "gpt_status": gpt_status,
-            "student_id": student_id,
-            "flashcard_id": flashcard_id,
-            "flashcard_updated_time": flashcard_updated_time,
-            "context_used": True
+            "gpt_status": gpt_status
         }
 
+    # ───────────────────────────────────────────────
+    # ⭐⭐⭐ NEW ⭐⭐⭐
+    # 7️⃣ START_COMPLETED_FLASHCARDS
+    # ───────────────────────────────────────────────
+    elif action == "start_completed_flashcards":
+        rpc_data = call_rpc("get_first_completed_flashcard", {
+            "p_student_id": student_id,
+            "p_subject_id": subject_id
+        })
+
+        if not rpc_data:
+            return {"error": "❌ get_first_completed_flashcard RPC failed"}
+
+        safe = _make_json_safe(rpc_data)
+
+        return {
+            **safe,
+            "student_id": student_id,
+            "subject_id": subject_id
+        }
+
+    # ───────────────────────────────────────────────
+    # 8️⃣ NEXT_COMPLETED_FLASHCARD
+    # ───────────────────────────────────────────────
+    elif action == "next_completed_flashcard":
+        current_order = payload.get("current_react_order")
+
+        rpc_data = call_rpc("get_next_completed_flashcard", {
+            "p_student_id": student_id,
+            "p_subject_id": subject_id,
+            "p_current_react_order": current_order
+        })
+
+        if not rpc_data:
+            return {"error": "❌ get_next_completed_flashcard RPC failed"}
+
+        safe = _make_json_safe(rpc_data)
+
+        return {
+            **safe,
+            "student_id": student_id,
+            "subject_id": subject_id
+        }
+
+    # ───────────────────────────────────────────────
     else:
         return {"error": f"Unknown flashcard action '{action}'"}
 
 
 # ───────────────────────────────────────────────
-# 🧩 SUBMIT_FLASHCARD_PROGRESS
+# SUBMIT FLASHCARD PROGRESS
 # ───────────────────────────────────────────────
 @app.post("/submit_flashcard_progress")
 async def submit_flashcard_progress(request: Request):
@@ -376,10 +418,11 @@ async def submit_flashcard_progress(request: Request):
             .eq("react_order_final", react_order_final) \
             .execute()
 
-        print(f"✅ Flashcard progress updated for {student_id}, react_order {react_order_final}")
+        print(f"✅ Updated progress → student: {student_id}, order: {react_order_final}")
         return {"status": "success"}
+
     except Exception as e:
-        print(f"❌ Error updating flashcard progress: {e}")
+        print(f"❌ Error updating progress: {e}")
         return {"error": str(e)}
 
 
