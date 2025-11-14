@@ -200,7 +200,7 @@ Guide the student concisely in Markdown.
         return {"wrong_mcqs": row.data or []}
 
     # ───────────────────────────────────────────
-    # ⭐ NEW: 9️⃣ UNIFIED REVIEW CHAT
+    # ⭐ UPDATED: 9️⃣ UNIFIED REVIEW CHAT (with empty-message guard)
     # ───────────────────────────────────────────
     elif action == "review_chat":
         react_order_final = payload.get("react_order_final")
@@ -223,14 +223,18 @@ Guide the student concisely in Markdown.
         pointer_id = pointer["pointer_id"]
         convo = pointer.get("conversation_log", [])
 
-        # Add student message
+        # ✅ Only respond if message is non-empty
+        if not message or not message.strip():
+            return {"existing_conversation": convo}
+
+        # Append student message
         convo.append({
             "role": "student",
-            "content": message,
+            "content": message.strip(),
             "ts": datetime.utcnow().isoformat() + "Z",
         })
 
-        # ⭐ USE SAME GPT PROMPT AS NORMAL CHAT
+        # GPT reply (same as chat)
         prompt = """
 You are a senior NEET-PG mentor with 30 years’ experience.
 Guide the student concisely in Markdown.
