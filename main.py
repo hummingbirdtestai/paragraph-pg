@@ -74,11 +74,12 @@ async def orchestrate(request: Request):
                 "ts": datetime.utcnow().isoformat() + "Z",
             })
 
-            # GPT reply
+            # GPT reply (OFFICIAL PROMPT)
             prompt = """
 You are a senior NEET-PG mentor with 30 years’ experience.
 Guide the student concisely in Markdown.
 """
+
             mentor_reply = chat_with_gpt(prompt, convo)
 
             convo.append({
@@ -229,8 +230,13 @@ Guide the student concisely in Markdown.
             "ts": datetime.utcnow().isoformat() + "Z",
         })
 
-        # GPT Reply
-        mentor_reply = chat_with_gpt("You are a NEET-PG mentor.", convo)
+        # ⭐ USE SAME GPT PROMPT AS NORMAL CHAT
+        prompt = """
+You are a senior NEET-PG mentor with 30 years’ experience.
+Guide the student concisely in Markdown.
+"""
+
+        mentor_reply = chat_with_gpt(prompt, convo)
 
         convo.append({
             "role": "assistant",
@@ -285,4 +291,3 @@ async def submit_answer(request: Request):
 @app.get("/")
 def home():
     return {"message": "🧠 Unified review_chat enabled!"}
-
