@@ -238,7 +238,7 @@ def get_accuracy_analysis(request: ProgressRequest):
         supabase.table("analysis_comments")
         .select("*")
         .eq("student_id", student_id)
-        .eq("comment_type", "accuracy_analysis")
+        .eq("comment_type", "practice_accuracy")
         .order("updated_at", desc=True)
         .execute()
     )
@@ -283,7 +283,7 @@ def get_accuracy_analysis(request: ProgressRequest):
         "student_id": student_id,
         "student_name": student_name,
         "mentor_comment": mentor_comment,
-        "comment_type": "accuracy_analysis"
+        "comment_type": "practice_accuracy"
     }).execute()
 
     return {
