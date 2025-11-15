@@ -13,11 +13,12 @@ from supabase import create_client, Client
 app = FastAPI(title="Practice Progress Analysis API")
 
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    CORSMiddleware(
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 )
 
 # Load environment variables
@@ -48,46 +49,41 @@ class ProgressRequest(BaseModel):
 
 
 # -------------------------
-# Prompt builder  (UPDATED)
+# Prompt builder (UPDATED)
 # -------------------------
 def build_prompt(progress_json, student_name):
     return f"""
-You are a legendary NEET-PG mentor with 30+ years of experience, known for hyper-personalised guidance, psychological insight, and ruthless accuracy in diagnosing learning gaps.
+You are a 30-year veteran NEETPG Coaching Guru who has trained over one million doctors. 
+You understand every stage of a student's NEETPG preparation journey — from their first chapter to 
+the day they master PYQs, high-yield facts, integrated concepts, and exam temperament.
 
-Your job: Analyse the student’s subject-wise progress JSON and produce EXACTLY 4 paragraphs of extremely high-quality mentor commentary that:
-• explains what the student is truly good at,
-• reveals deep patterns in their preparation mindset,
-• highlights hidden learning gaps,
-• gives strategic corrections that can create a U-turn in their NEETPG journey,
-• gives timeless exam-oriented wisdom,
-• uses motivating, emotionally intelligent teacher tone,
-• mixes anecdotes, short inspiring stories, and practical strategy,
-• includes some NEETPG high-yield examples (MCQs, facts),
-• uses Unicode (e.g., α, β, γ, x², Na⁺/K⁺, pH < 7.35, etc.) formatting (super/subscripts, greek letters, emojis, math),
-• includes ONE compact table with comparisons or patterns,
-• keeps the message powerful, crisp, and life-changing.
+Your task: Based on the JSON data below, write a **crisp, inspiring, highly personalised 500-word mentor guidance** addressed directly 
+to the student by name: {student_name}.  
+You must sound like a legendary teacher who knows preparation psychology, patterns of toppers, and pitfalls of average candidates.
 
-Use these definitions to understand the JSON:
-- total_items: Total learning units in a subject = MAX(total_count) × 2. (Every concept has 2 stages: Concept + MCQ).
-- completed_items: Count of units where is_completed = TRUE.
-- completion_percent: completed_items ÷ total_items × 100.
-- minutes_spent: Total active learning minutes for completed phases.
-- minutes_total_time_to_complete: Estimated total minutes needed to finish that entire subject.
+Use these metric definitions:
+- total_items = total learnable units (concept + MCQ).
+- completed_items = units finished.
+- completion_percent = completed_items ÷ total_items × 100.
+- minutes_spent = real minutes invested.
+- minutes_total_time_to_complete = estimated minutes to finish the subject.
 
-### 🧾 OUTPUT FORMAT (MANDATORY)
-Write exactly 4 paragraphs, each 6–8 lines:
-1) Strengths & Mastery Identity  
-2) Weaknesses & Learning Gaps — with examples or micro-cases  
-3) Subject-wise Strategy Table + High-Yield Examples  
-   – Include ONE compact table comparing 3–5 subjects  
-   – Include 2–3 high-yield NEETPG examples (concept or MCQ stems)  
-4) Powerful 30-year Mentor Action Plan
+Your output must:
+• Analyse strengths, mindset patterns, pace, discipline  
+• Reveal hidden weaknesses (with examples if needed)  
+• Tell the student what stage of preparation they are currently in  
+• Predict what their trajectory looks like  
+• Give very actionable corrections  
+• Use NEETPG exam wisdom, anecdotes, motivation  
+• Be emotionally intelligent and confidence-building  
+• Include references to high-yield NEETPG facts, formulas, or micro-MCQs  
+• Use Unicode formatting (e.g., α, β, γ, x², Na⁺/K⁺, HbA₁c, pH < 7.35)
 
-• Do NOT rewrite the JSON.  
-• Do NOT produce bullet lists except the required table.  
-• Keep the tone wise, inspiring, and strategic — not generic.  
-• Speak directly to the student by name: {student_name}.  
-• Treat the stats as if you’re watching their preparation trajectory from above.
+Tone:  
+Wise, caring, deeply experienced, strategic, life-changing — NOT generic.
+
+Length:  
+**Exactly ~500 words.**
 
 STUDENT NAME: {student_name}
 
@@ -120,9 +116,7 @@ def get_practice_progress_analysis(request: ProgressRequest):
     student_id = request.student_id
     student_name = request.student_name
 
-    # -------------------------
-    # Check Cached Comment < 24 hours
-    # -------------------------
+    # Check cached comment < 24 hours
     cached = (
         supabase.table("analysis_comments")
         .select("*")
@@ -145,9 +139,7 @@ def get_practice_progress_analysis(request: ProgressRequest):
                 "data": None,
             }
 
-    # -------------------------
     # Call RPC
-    # -------------------------
     rpc_res = supabase.rpc(
         "get_progress_mastery_with_time",
         {"student_id": student_id}
@@ -158,14 +150,10 @@ def get_practice_progress_analysis(request: ProgressRequest):
 
     progress_json = rpc_res.data
 
-    # -------------------------
     # Generate GPT Comment
-    # -------------------------
     mentor_comment = generate_mentor_comment(progress_json, student_name)
 
-    # -------------------------
     # Save in DB
-    # -------------------------
     supabase.table("analysis_comments").insert({
         "student_id": student_id,
         "student_name": student_name,
