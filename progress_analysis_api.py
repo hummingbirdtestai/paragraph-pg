@@ -13,12 +13,11 @@ from supabase import create_client, Client
 app = FastAPI(title="Practice Progress Analysis API")
 
 app.add_middleware(
-    CORSMiddleware(
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Load environment variables
@@ -49,45 +48,37 @@ class ProgressRequest(BaseModel):
 
 
 # -------------------------
-# Prompt builder (UPDATED)
+# Prompt builder (YOUR NEW PROMPT)
 # -------------------------
 def build_prompt(progress_json, student_name):
     return f"""
-You are a 30-year veteran NEETPG Coaching Guru who has trained over one million doctors. 
-You understand every stage of a student's NEETPG preparation journey — from their first chapter to 
-the day they master PYQs, high-yield facts, integrated concepts, and exam temperament.
+You are 30 Years experienced NEETPG Coaching Guru who trained a Million Doctors for NEETPG Exam and knows the trajectory of NEETPG Aspirants—from the start of preparation to the day they master all High Yield topics, PYQs, integrated concepts and exam-temperament. 
 
-Your task: Based on the JSON data below, write a **crisp, inspiring, highly personalised 500-word mentor guidance** addressed directly 
-to the student by name: {student_name}.  
-You must sound like a legendary teacher who knows preparation psychology, patterns of toppers, and pitfalls of average candidates.
+Advise the student based on progress metrics. 
+Address the student directly by name: {student_name}.
 
-Use these metric definitions:
-- total_items = total learnable units (concept + MCQ).
-- completed_items = units finished.
-- completion_percent = completed_items ÷ total_items × 100.
-- minutes_spent = real minutes invested.
-- minutes_total_time_to_complete = estimated minutes to finish the subject.
+Use these definitions:
+• total_items = total learnable units (concept + MCQ)
+• completed_items = units finished
+• completion_percent = completed_items ÷ total_items × 100
+• minutes_spent = real minutes invested
+• minutes_total_time_to_complete = estimated minutes to finish the subject
 
-Your output must:
-• Analyse strengths, mindset patterns, pace, discipline  
-• Reveal hidden weaknesses (with examples if needed)  
-• Tell the student what stage of preparation they are currently in  
-• Predict what their trajectory looks like  
-• Give very actionable corrections  
-• Use NEETPG exam wisdom, anecdotes, motivation  
-• Be emotionally intelligent and confidence-building  
-• Include references to high-yield NEETPG facts, formulas, or micro-MCQs  
-• Use Unicode formatting (e.g., α, β, γ, x², Na⁺/K⁺, HbA₁c, pH < 7.35)
+Your output:
+Write a **crisp, powerful, emotionally intelligent 500-word mentor message** that:
+• analyses strengths, weaknesses and mindset  
+• explains what stage the student is currently in  
+• predicts trajectory  
+• gives actionable strategy  
+• includes anecdotes, exam wisdom, and motivational insights  
+• uses Unicode (α, β, γ, x², Na⁺/K⁺, HbA₁c, pH < 7.35, etc.)  
+• reflects experience of training 1 million doctors
 
-Tone:  
-Wise, caring, deeply experienced, strategic, life-changing — NOT generic.
+Do NOT repeat JSON.  
+Do NOT write headings.  
+Write as a continuous mentor letter to {student_name}.
 
-Length:  
-**Exactly ~500 words.**
-
-STUDENT NAME: {student_name}
-
-PROGRESS DATA:
+STUDENT DATA:
 {progress_json}
 """
 
@@ -116,7 +107,7 @@ def get_practice_progress_analysis(request: ProgressRequest):
     student_id = request.student_id
     student_name = request.student_name
 
-    # Check cached comment < 24 hours
+    # Check Cached Comment < 24 hours
     cached = (
         supabase.table("analysis_comments")
         .select("*")
