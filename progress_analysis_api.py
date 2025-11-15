@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
 import datetime
-import openai
+from openai import OpenAI
 from supabase import create_client, Client
 
 # -------------------------
@@ -35,8 +35,8 @@ if not OPENAI_API_KEY:
 # Create Supabase client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
 
-# Configure OpenAI
-openai.api_key = OPENAI_API_KEY
+# Configure OpenAI NEW SDK
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 
 # -------------------------
@@ -73,18 +73,20 @@ Return ONLY the mentor_comment text (no JSON, no labels).
 
 
 # -------------------------
-# Generate mentor comment using GPT
+# Generate mentor comment using OpenAI (NEW API)
 # -------------------------
 def generate_mentor_comment(progress_json, student_name):
     prompt = build_prompt(progress_json, student_name)
 
-    completion = openai.ChatCompletion.create(
+    completion = client.chat.completions.create(
         model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
+        messages=[
+            {"role": "user", "content": prompt}
+        ],
         temperature=0.7,
     )
 
-    return completion.choices[0].message["content"].strip()
+    return completion.choices[0].message.content.strip()
 
 
 # -------------------------
@@ -111,7 +113,11 @@ def get_practice_progress_analysis(request: ProgressRequest):
 
     if cached.data:
         last_entry = cached.data[0]
-        last_time = datetime.datetime.fromisoformat(last_entry["updated_at"])
+
+        # Fix timestamp format issues from Supabase ("Z" suffix)
+        ts = last_entry["updated_at"].replace("Z", "+00:00")
+        last_time = datetime.datetime.fromisoformat(ts)
+
         now = datetime.datetime.now(datetime.timezone.utc)
 
         if (now - last_time) < datetime.timedelta(hours=24):
@@ -149,22 +155,3 @@ def get_practice_progress_analysis(request: ProgressRequest):
         "student_id": student_id,
         "student_name": student_name,
         "mentor_comment": mentor_comment,
-        "comment_type": "practice_progress"
-    }).execute()
-
-    # -------------------------------------------------
-    # STEP 5: Return to frontend
-    # -------------------------------------------------
-    return {
-        "source": "fresh",
-        "mentor_comment": mentor_comment,
-        "data": progress_json
-    }
-
-
-# -------------------------
-# ROOT (Health Check)
-# -------------------------
-@app.get("/")
-def health():
-    return {"status": "Practice Progress API running 🚀"}
