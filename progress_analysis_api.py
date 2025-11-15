@@ -9,7 +9,7 @@ from supabase import create_client, Client
 # -------------------------
 # Setup
 # -------------------------
-app = FastAPI()
+app = FastAPI(title="Practice Progress Analysis API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -19,12 +19,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Load environment variables
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
+# Validate environment variables
+if not SUPABASE_URL:
+    raise Exception("❌ Missing SUPABASE_URL environment variable")
+if not SUPABASE_SERVICE_ROLE:
+    raise Exception("❌ Missing SUPABASE_SERVICE_ROLE_KEY environment variable")
+if not OPENAI_API_KEY:
+    raise Exception("❌ Missing OPENAI_API_KEY environment variable")
+
+# Create Supabase client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# Configure OpenAI
 openai.api_key = OPENAI_API_KEY
 
 
@@ -104,7 +115,6 @@ def get_practice_progress_analysis(request: ProgressRequest):
         now = datetime.datetime.now(datetime.timezone.utc)
 
         if (now - last_time) < datetime.timedelta(hours=24):
-            # RETURN CACHED COMMENT
             return {
                 "source": "cached",
                 "mentor_comment": last_entry["mentor_comment"],
@@ -124,7 +134,7 @@ def get_practice_progress_analysis(request: ProgressRequest):
     if rpc_res.data is None:
         raise HTTPException(status_code=400, detail="RPC returned no data")
 
-    progress_json = rpc_res.data  # Already JSON-serializable
+    progress_json = rpc_res.data
 
     # -------------------------------------------------
     # STEP 3: Generate ChatGPT mentor comment
@@ -133,7 +143,7 @@ def get_practice_progress_analysis(request: ProgressRequest):
     mentor_comment = generate_mentor_comment(progress_json, student_name)
 
     # -------------------------------------------------
-    # STEP 4: Persist in analysis_comments
+    # STEP 4: Save in analysis_comments
     # -------------------------------------------------
     supabase.table("analysis_comments").insert({
         "student_id": student_id,
@@ -150,3 +160,11 @@ def get_practice_progress_analysis(request: ProgressRequest):
         "mentor_comment": mentor_comment,
         "data": progress_json
     }
+
+
+# -------------------------
+# ROOT (Health Check)
+# -------------------------
+@app.get("/")
+def health():
+    return {"status": "Practice Progress API running 🚀"}
