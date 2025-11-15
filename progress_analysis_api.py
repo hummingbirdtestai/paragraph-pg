@@ -35,7 +35,7 @@ if not OPENAI_API_KEY:
 # Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
 
-# NEW OpenAI client
+# OpenAI client
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 
@@ -48,7 +48,7 @@ class ProgressRequest(BaseModel):
 
 
 # -------------------------
-# Prompt builder (YOUR NEW PROMPT)
+# Prompt Builder
 # -------------------------
 def build_prompt(progress_json, student_name):
     return f"""
@@ -124,10 +124,19 @@ def get_practice_progress_analysis(request: ProgressRequest):
         now = datetime.datetime.now(datetime.timezone.utc)
 
         if (now - last_time) < datetime.timedelta(hours=24):
+            
+            # Always fetch fresh progress data (only GPT Comment is cached)
+            rpc_res = supabase.rpc(
+                "get_progress_mastery_with_time",
+                {"student_id": student_id}
+            ).execute()
+
+            progress_json = rpc_res.data
+            
             return {
                 "source": "cached",
                 "mentor_comment": entry["mentor_comment"],
-                "data": None,
+                "data": progress_json,
             }
 
     # Call RPC
