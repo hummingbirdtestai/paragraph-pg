@@ -8,7 +8,7 @@ import json
 # ───────────────────────────────────────────────
 # Initialize FastAPI app
 # ───────────────────────────────────────────────
-app = FastAPI(title="Paragraph Orchestra API", version="3.0.0")
+app = FastAPI(title="Paragraph Orchestra API", version="3.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -46,7 +46,7 @@ async def orchestrate(request: Request):
         return rpc_data
 
     # ───────────────────────────────────────────
-    # 2️⃣ ACTIVE LEARNING CHAT (latest pointer)
+    # 2️⃣ ACTIVE LEARNING CHAT
     # ───────────────────────────────────────────
     elif action == "chat":
         try:
@@ -74,12 +74,11 @@ async def orchestrate(request: Request):
                 "ts": datetime.utcnow().isoformat() + "Z",
             })
 
-            # GPT reply (OFFICIAL PROMPT)
+            # GPT reply
             prompt = """
 You are a senior NEET-PG mentor with 30 years’ experience.
 Guide the student concisely in Markdown.
 """
-
             mentor_reply = chat_with_gpt(prompt, convo)
 
             convo.append({
@@ -88,9 +87,9 @@ Guide the student concisely in Markdown.
                 "ts": datetime.utcnow().isoformat() + "Z",
             })
 
-            supabase.table("student_phase_pointer")\
-                .update({"conversation_log": convo})\
-                .eq("pointer_id", pointer_id)\
+            supabase.table("student_phase_pointer") \
+                .update({"conversation_log": convo}) \
+                .eq("pointer_id", pointer_id) \
                 .execute()
 
             return {"mentor_reply": mentor_reply}
@@ -99,7 +98,7 @@ Guide the student concisely in Markdown.
             return {"error": str(e)}
 
     # ───────────────────────────────────────────
-    # 3️⃣ NEXT PHASE (active learning)
+    # 3️⃣ NEXT PHASE
     # ───────────────────────────────────────────
     elif action == "next":
         rpc_data = call_rpc("next_orchestra", {
@@ -109,7 +108,7 @@ Guide the student concisely in Markdown.
         return rpc_data
 
     # ───────────────────────────────────────────
-    # 4️⃣ BOOKMARK REVIEW (first + next)
+    # 4️⃣ BOOKMARK REVIEW
     # ───────────────────────────────────────────
     elif action == "bookmark_review":
         row = call_rpc("get_first_bookmarked_phase", {
@@ -128,39 +127,60 @@ Guide the student concisely in Markdown.
         return {"bookmarked_concepts": [row] if row else []}
 
     # ───────────────────────────────────────────
-    # 5️⃣ REVIEW COMPLETED (first)
+    # 5️⃣ REVIEW COMPLETED — START (✅ now with seq + total)
     # ───────────────────────────────────────────
     elif action == "review_upto_start":
-        row = (
+        rows = (
             supabase.table("student_phase_pointer")
             .select("*")
             .eq("student_id", student_id)
             .eq("subject_id", subject_id)
             .eq("is_completed", True)
             .order("react_order_final", desc=False)
-            .limit(1)
             .execute()
-        )
-        return {"review_upto": row.data or []}
+        ).data
+
+        if not rows:
+            return {"review_upto": []}
+
+        total = len(rows)
+        for i, row in enumerate(rows):
+            row["seq_num"] = i + 1
+            row["total_count"] = total
+
+        # first one
+        return {"review_upto": [rows[0]]}
 
     # ───────────────────────────────────────────
-    # 6️⃣ REVIEW COMPLETED (next)
+    # 6️⃣ REVIEW COMPLETED — NEXT (✅ now with seq + total)
     # ───────────────────────────────────────────
     elif action == "review_upto_next":
         current_order = payload.get("react_order_final")
 
-        row = (
+        rows = (
             supabase.table("student_phase_pointer")
             .select("*")
             .eq("student_id", student_id)
             .eq("subject_id", subject_id)
             .eq("is_completed", True)
-            .gt("react_order_final", current_order)
             .order("react_order_final", desc=False)
-            .limit(1)
             .execute()
+        ).data
+
+        if not rows:
+            return {"review_upto": []}
+
+        total = len(rows)
+        for i, row in enumerate(rows):
+            row["seq_num"] = i + 1
+            row["total_count"] = total
+
+        next_row = next(
+            (r for r in rows if r["react_order_final"] > current_order),
+            None
         )
-        return {"review_upto": row.data or []}
+
+        return {"review_upto": [next_row] if next_row else []}
 
     # ───────────────────────────────────────────
     # 7️⃣ WRONG MCQs START
@@ -184,7 +204,6 @@ Guide the student concisely in Markdown.
     # ───────────────────────────────────────────
     elif action == "wrong_mcqs_next":
         current_order = payload.get("react_order_final")
-
         row = (
             supabase.table("student_phase_pointer")
             .select("*")
@@ -200,12 +219,11 @@ Guide the student concisely in Markdown.
         return {"wrong_mcqs": row.data or []}
 
     # ───────────────────────────────────────────
-    # ⭐ UPDATED: 9️⃣ UNIFIED REVIEW CHAT (with empty-message guard)
+    # 9️⃣ REVIEW CHAT (Unified)
     # ───────────────────────────────────────────
     elif action == "review_chat":
         react_order_final = payload.get("react_order_final")
 
-        # Fetch exact phase row
         row = (
             supabase.table("student_phase_pointer")
             .select("pointer_id, conversation_log")
@@ -223,23 +241,20 @@ Guide the student concisely in Markdown.
         pointer_id = pointer["pointer_id"]
         convo = pointer.get("conversation_log", [])
 
-        # ✅ Only respond if message is non-empty
+        # No message? just return previous convo
         if not message or not message.strip():
             return {"existing_conversation": convo}
 
-        # Append student message
         convo.append({
             "role": "student",
             "content": message.strip(),
             "ts": datetime.utcnow().isoformat() + "Z",
         })
 
-        # GPT reply (same as chat)
         prompt = """
 You are a senior NEET-PG mentor with 30 years’ experience.
 Guide the student concisely in Markdown.
 """
-
         mentor_reply = chat_with_gpt(prompt, convo)
 
         convo.append({
@@ -248,18 +263,19 @@ Guide the student concisely in Markdown.
             "ts": datetime.utcnow().isoformat() + "Z",
         })
 
-        supabase.table("student_phase_pointer")\
-            .update({"conversation_log": convo})\
-            .eq("pointer_id", pointer_id)\
+        supabase.table("student_phase_pointer") \
+            .update({"conversation_log": convo}) \
+            .eq("pointer_id", pointer_id) \
             .execute()
 
         return {"mentor_reply": mentor_reply}
 
     # ───────────────────────────────────────────
-    # ❿ UNKNOWN
+    # ❿ UNKNOWN ACTION
     # ───────────────────────────────────────────
     else:
         return {"error": f"Unknown action '{action}'"}
+
 
 # ───────────────────────────────────────────────
 # SUBMIT MCQ ANSWER
@@ -280,8 +296,8 @@ async def submit_answer(request: Request):
             "submitted_at": datetime.utcnow().isoformat() + "Z",
         }
 
-        supabase.table("student_mcq_submissions")\
-            .upsert(payload, on_conflict=["student_id", "react_order_final"])\
+        supabase.table("student_mcq_submissions") \
+            .upsert(payload, on_conflict=["student_id", "react_order_final"]) \
             .execute()
 
         return {"status": "success", "data": payload}
@@ -289,9 +305,10 @@ async def submit_answer(request: Request):
     except Exception as e:
         return {"error": str(e)}
 
+
 # ───────────────────────────────────────────────
-# HOME
+# HEALTH CHECK
 # ───────────────────────────────────────────────
 @app.get("/")
 def home():
-    return {"message": "🧠 Unified review_chat enabled!"}
+    return {"message": "🧠 Review flow now includes seq_num & total_count ✅"}
