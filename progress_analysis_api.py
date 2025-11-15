@@ -6,6 +6,7 @@ import datetime
 from openai import OpenAI
 from supabase import create_client, Client
 
+
 # -------------------------
 # Setup
 # -------------------------
@@ -24,18 +25,17 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# Validate environment variables
 if not SUPABASE_URL:
-    raise Exception("❌ Missing SUPABASE_URL environment variable")
+    raise Exception("❌ Missing SUPABASE_URL")
 if not SUPABASE_SERVICE_ROLE:
-    raise Exception("❌ Missing SUPABASE_SERVICE_ROLE_KEY environment variable")
+    raise Exception("❌ Missing SUPABASE_SERVICE_ROLE_KEY")
 if not OPENAI_API_KEY:
-    raise Exception("❌ Missing OPENAI_API_KEY environment variable")
+    raise Exception("❌ Missing OPENAI_API_KEY")
 
-# Create Supabase client
+# Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
 
-# Configure OpenAI NEW SDK
+# NEW OpenAI client
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 
@@ -48,41 +48,35 @@ class ProgressRequest(BaseModel):
 
 
 # -------------------------
-# ChatGPT prompt builder
+# Prompt builder
 # -------------------------
 def build_prompt(progress_json, student_name):
     return f"""
 You are an AI mentor for a NEET-PG student.
-
-The following JSON is the student's subject-wise progress, time spent, and mastery metrics:
 
 STUDENT NAME: {student_name}
 
 PROGRESS DATA:
 {progress_json}
 
-Write a short, high-quality mentor_feedback comment:
-- Be motivational
-- Identify 2–3 strengths
-- Identify 2–3 weaknesses
-- Suggest exact next steps
-- Keep it within 5–6 lines
-
-Return ONLY the mentor_comment text (no JSON, no labels).
+Write a short 5–6 line mentor feedback:
+• motivational
+• 2–3 strengths
+• 2–3 weaknesses
+• exact next steps
+Return ONLY the feedback text.
 """
 
 
 # -------------------------
-# Generate mentor comment using OpenAI (NEW API)
+# GPT: Mentor Comment
 # -------------------------
 def generate_mentor_comment(progress_json, student_name):
     prompt = build_prompt(progress_json, student_name)
 
     completion = client.chat.completions.create(
         model="gpt-4o-mini",
-        messages=[
-            {"role": "user", "content": prompt}
-        ],
+        messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
     )
 
@@ -98,10 +92,9 @@ def get_practice_progress_analysis(request: ProgressRequest):
     student_id = request.student_id
     student_name = request.student_name
 
-    # -------------------------------------------------
-    # STEP 1: Check if mentor comment exists < 24 hours
-    # -------------------------------------------------
-    print("Checking cached mentor comment...")
+    # -------------------------
+    # Check Cached Comment < 24 hours
+    # -------------------------
     cached = (
         supabase.table("analysis_comments")
         .select("*")
@@ -112,46 +105,56 @@ def get_practice_progress_analysis(request: ProgressRequest):
     )
 
     if cached.data:
-        last_entry = cached.data[0]
-
-        # Fix timestamp format issues from Supabase ("Z" suffix)
-        ts = last_entry["updated_at"].replace("Z", "+00:00")
+        entry = cached.data[0]
+        ts = entry["updated_at"].replace("Z", "+00:00")
         last_time = datetime.datetime.fromisoformat(ts)
-
         now = datetime.datetime.now(datetime.timezone.utc)
 
         if (now - last_time) < datetime.timedelta(hours=24):
             return {
                 "source": "cached",
-                "mentor_comment": last_entry["mentor_comment"],
-                "data": None
+                "mentor_comment": entry["mentor_comment"],
+                "data": None,
             }
 
-    # -------------------------------------------------
-    # STEP 2: Call RPC get_progress_mastery_with_time
-    # -------------------------------------------------
-    print("Calling Supabase RPC...")
-
+    # -------------------------
+    # Call RPC
+    # -------------------------
     rpc_res = supabase.rpc(
         "get_progress_mastery_with_time",
         {"student_id": student_id}
     ).execute()
 
     if rpc_res.data is None:
-        raise HTTPException(status_code=400, detail="RPC returned no data")
+        raise HTTPException(400, "RPC returned no data")
 
     progress_json = rpc_res.data
 
-    # -------------------------------------------------
-    # STEP 3: Generate ChatGPT mentor comment
-    # -------------------------------------------------
-    print("Generating ChatGPT feedback...")
+    # -------------------------
+    # Generate GPT Comment
+    # -------------------------
     mentor_comment = generate_mentor_comment(progress_json, student_name)
 
-    # -------------------------------------------------
-    # STEP 4: Save in analysis_comments
-    # -------------------------------------------------
+    # -------------------------
+    # Save in DB
+    # -------------------------
     supabase.table("analysis_comments").insert({
         "student_id": student_id,
         "student_name": student_name,
         "mentor_comment": mentor_comment,
+        "comment_type": "practice_progress"
+    }).execute()
+
+    return {
+        "source": "fresh",
+        "mentor_comment": mentor_comment,
+        "data": progress_json
+    }
+
+
+# -------------------------
+# Health Check
+# -------------------------
+@app.get("/")
+def health():
+    return {"status": "Practice Progress API running 🚀"}
