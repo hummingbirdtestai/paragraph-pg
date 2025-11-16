@@ -370,7 +370,7 @@ def get_learning_gap_analysis(request: ProgressRequest):
         supabase.table("analysis_comments")
         .select("*")
         .eq("student_id", student_id)
-        .eq("comment_type", "learning_gap")
+        .eq("comment_type", "flashcard_learning_gap")
         .order("updated_at", desc=True)
         .execute()
     )
@@ -415,7 +415,7 @@ def get_learning_gap_analysis(request: ProgressRequest):
         "student_id": student_id,
         "student_name": student_name,
         "mentor_comment": mentor_comment,
-        "comment_type": "learning_gap"
+        "comment_type": "flashcard_learning_gap"
     }).execute()
 
     return {
