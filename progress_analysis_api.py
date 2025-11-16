@@ -604,3 +604,111 @@ def get_mocktest_performance(request: ProgressRequest):
         "data": mock_json
     }
 
+# ============================================================
+# BATTLE PERFORMANCE — NEW
+# ============================================================
+
+def build_battle_prompt(battle_json, student_name):
+    return f"""
+You are a 30 Years experienced NEETPG Coaching Guru who has trained a Million Doctors for NEETPG Exam and understand how students evolve inside high-pressure competitive Battle Rooms. These are the student's Battle performance metrics across subjects.
+
+Address the student directly by Name: {student_name}.
+
+Use these definitions derived from battle analytics:
+• total_questions = MCQs asked  
+• answered = attempted  
+• correct_answers = correct  
+• wrong_answers = incorrect  
+• score = (correct × 4) − wrong  
+• accuracy_percent = (correct ÷ answered × 100)  
+• attempt_rate_percent = (answered ÷ total_questions × 100)  
+• avg_time_per_mcq_sec = average time per MCQ in seconds  
+• time_spent_min = total minutes spent  
+• time_eff_percent = (20 sec ÷ avg_time_per_mcq_sec × 100)  
+• effort_eff_percent = score efficiency as % of max possible marks  
+
+Make the message emotionally intelligent, powerful and exactly 500 words.  
+Use Unicode symbols (α, β, γ, Δ, Na⁺/K⁺, μ, λ).  
+Do NOT repeat the JSON.  
+Do NOT use headings.  
+Write as one continuous mentor letter addressed personally to {student_name}.
+
+STUDENT DATA:
+{battle_json}
+"""
+
+
+def generate_battle_comment(battle_json, student_name):
+    prompt = build_battle_prompt(battle_json, student_name)
+    completion = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7,
+    )
+    return completion.choices[0].message.content.strip()
+
+
+@app.post("/battle/battle_stats")
+def get_battle_stats(request: ProgressRequest):
+
+    student_id = request.student_id
+    student_name = request.student_name
+
+    # ---- CACHE CHECK ----
+    cached = (
+        supabase.table("analysis_comments")
+        .select("*")
+        .eq("student_id", student_id)
+        .eq("comment_type", "battle_stats")
+        .order("updated_at", desc=True)
+        .execute()
+    )
+
+    if cached.data:
+        entry = cached.data[0]
+
+        ts = entry["updated_at"].replace("Z", "+00:00")
+        last = datetime.datetime.fromisoformat(ts)
+        now = datetime.datetime.now(datetime.timezone.utc)
+
+        # Cache valid for 24 hours
+        if (now - last) < datetime.timedelta(hours=24):
+
+            rpc_res = supabase.rpc(
+                "get_battle_subject_performance",
+                {"p_student_id": student_id}
+            ).execute()
+
+            return {
+                "source": "cached",
+                "mentor_comment": entry["mentor_comment"],
+                "data": rpc_res.data,
+            }
+
+    # ---- FRESH RPC ----
+    rpc_res = supabase.rpc(
+        "get_battle_subject_performance",
+        {"p_student_id": student_id}
+    ).execute()
+
+    battle_json = rpc_res.data
+    if battle_json is None:
+        raise HTTPException(400, "RPC returned no data")
+
+    mentor_comment = generate_battle_comment(battle_json, student_name)
+
+    # ---- SAVE ----
+    supabase.table("analysis_comments").insert({
+        "student_id": student_id,
+        "student_name": student_name,
+        "mentor_comment": mentor_comment,
+        "comment_type": "battle_stats"
+    }).execute()
+
+    return {
+        "source": "fresh",
+        "mentor_comment": mentor_comment,
+        "data": battle_json
+    }
+
+
