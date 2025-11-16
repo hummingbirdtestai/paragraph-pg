@@ -822,4 +822,119 @@ def get_battle_performance(request: ProgressRequest):
         "data": battle_json
     }
 
+# ============================================================
+# BATTLE LEADERBOARD — PROMPT
+# ============================================================
+
+def build_battle_leaderboard_prompt(leaderboard_json, student_name):
+    return f"""
+You are a 30-year experienced NEETPG Coaching Guru who has trained more than one million doctors.
+You deeply understand how competitive rank, percentile movement, accuracy under pressure,
+and cognitive resilience evolve inside NEETPG Battle Rooms.
+
+These are the student's complete Battle-Leaderboard outcomes across all battles they participated in.
+
+Address the student directly by name: {student_name}.
+
+Use these definitions EXACTLY:
+• rank = final standing in that battle  
+• total_students = total competitors  
+• percentile = % of competitors the student outperformed  
+• score = (correct × 4) − wrong  
+• leaderboard = list of all competitors with score + rank  
+• battle_title = name of the competitive battle  
+• battle_date = date of the exam-battle  
+
+Write a deeply insightful, emotionally intelligent, motivational mentor letter of EXACT 500 words.  
+Use Unicode symbols (α, β, γ, Δ, →, μ, λ, Na⁺/K⁺ pump).  
+Do NOT repeat the JSON.  
+Do NOT add headings or bullets.  
+Write a smooth continuous letter addressed personally to {student_name}.
+
+STUDENT DATA:
+{leaderboard_json}
+"""
+
+
+# ============================================================
+# GENERATOR — LEADERBOARD COMMENT
+# ============================================================
+
+def generate_battle_leaderboard_comment(leaderboard_json, student_name):
+    prompt = build_battle_leaderboard_prompt(leaderboard_json, student_name)
+    completion = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7,
+    )
+    return completion.choices[0].message.content.strip()
+
+
+# ============================================================
+# ENDPOINT — BATTLE LEADERBOARD
+# ============================================================
+
+@app.post("/battle/leaderboard")
+def get_battle_leaderboard(request: ProgressRequest):
+
+    student_id = request.student_id
+    student_name = request.student_name
+
+    # ---- CACHE CHECK ----
+    cached = (
+        supabase.table("analysis_comments")
+        .select("*")
+        .eq("student_id", student_id)
+        .eq("comment_type", "battle_leaderboard")
+        .order("updated_at", desc=True)
+        .execute()
+    )
+
+    if cached.data:
+        entry = cached.data[0]
+
+        ts = entry["updated_at"].replace("Z", "+00:00")
+        last = datetime.datetime.fromisoformat(ts)
+        now = datetime.datetime.now(datetime.timezone.utc)
+
+        # If cache <24h → return cached
+        if (now - last) < datetime.timedelta(hours=24):
+
+            rpc_res = supabase.rpc(
+                "get_all_battle_leaderboards_for_student",
+                {"p_student_id": student_id}
+            ).execute()
+
+            return {
+                "source": "cached",
+                "mentor_comment": entry["mentor_comment"],
+                "data": rpc_res.data,
+            }
+
+    # ---- FRESH RPC CALL ----
+    rpc_res = supabase.rpc(
+        "get_all_battle_leaderboards_for_student",
+        {"p_student_id": student_id}
+    ).execute()
+
+    leaderboard_json = rpc_res.data
+    if leaderboard_json is None:
+        raise HTTPException(400, "RPC returned no data")
+
+    # ---- GENERATE NEW COMMENT ----
+    mentor_comment = generate_battle_leaderboard_comment(leaderboard_json, student_name)
+
+    # ---- SAVE NEW COMMENT ----
+    supabase.table("analysis_comments").insert({
+        "student_id": student_id,
+        "student_name": student_name,
+        "mentor_comment": mentor_comment,
+        "comment_type": "battle_leaderboard"
+    }).execute()
+
+    return {
+        "source": "fresh",
+        "mentor_comment": mentor_comment,
+        "data": leaderboard_json
+    }
 
