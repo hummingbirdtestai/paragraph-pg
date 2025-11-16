@@ -12,14 +12,14 @@ from supabase import create_client, Client
 # -------------------------
 app = FastAPI(title="Practice Progress Analysis API")
 
-app.add_middleware(
-    CORSMiddleware(
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+app = CORSMiddleware(
+    app=app,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
+
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
