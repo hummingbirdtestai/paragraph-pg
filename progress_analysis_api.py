@@ -126,32 +126,25 @@ STUDENT DATA:
 
 
 # -------------------------
-# GPT Generator — PROGRESS
+# GPT Generators
 # -------------------------
 def generate_mentor_comment(progress_json, student_name):
     prompt = build_prompt(progress_json, student_name)
-
     completion = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
     )
-
     return completion.choices[0].message.content.strip()
 
 
-# -------------------------
-# GPT Generator — ACCURACY
-# -------------------------
 def generate_accuracy_comment(progress_json, student_name):
     prompt = build_accuracy_prompt(progress_json, student_name)
-
     completion = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
     )
-
     return completion.choices[0].message.content.strip()
 
 
@@ -164,7 +157,6 @@ def get_practice_progress_analysis(request: ProgressRequest):
     student_id = request.student_id
     student_name = request.student_name
 
-    # Check Cached Comment < 24 hours
     cached = (
         supabase.table("analysis_comments")
         .select("*")
@@ -181,7 +173,6 @@ def get_practice_progress_analysis(request: ProgressRequest):
         now = datetime.datetime.now(datetime.timezone.utc)
 
         if (now - last_time) < datetime.timedelta(hours=24):
-            
             rpc_res = supabase.rpc(
                 "get_progress_mastery_with_time",
                 {"student_id": student_id}
@@ -195,7 +186,6 @@ def get_practice_progress_analysis(request: ProgressRequest):
                 "data": progress_json,
             }
 
-    # Get new data
     rpc_res = supabase.rpc(
         "get_progress_mastery_with_time",
         {"student_id": student_id}
@@ -206,10 +196,8 @@ def get_practice_progress_analysis(request: ProgressRequest):
 
     progress_json = rpc_res.data
 
-    # Generate GPT Comment
     mentor_comment = generate_mentor_comment(progress_json, student_name)
 
-    # Save in DB
     supabase.table("analysis_comments").insert({
         "student_id": student_id,
         "student_name": student_name,
@@ -233,7 +221,6 @@ def get_accuracy_analysis(request: ProgressRequest):
     student_id = request.student_id
     student_name = request.student_name
 
-    # Cached Accuracy Comment < 24h
     cached = (
         supabase.table("analysis_comments")
         .select("*")
@@ -264,7 +251,6 @@ def get_accuracy_analysis(request: ProgressRequest):
                 "data": progress_json,
             }
 
-    # Call RPC
     rpc_res = supabase.rpc(
         "get_accuracy_performance_fast",
         {"student_id": student_id}
@@ -274,11 +260,8 @@ def get_accuracy_analysis(request: ProgressRequest):
         raise HTTPException(400, "RPC returned no data")
 
     progress_json = rpc_res.data
-
-    # Generate GPT Comment
     mentor_comment = generate_accuracy_comment(progress_json, student_name)
 
-    # Save in DB
     supabase.table("analysis_comments").insert({
         "student_id": student_id,
         "student_name": student_name,
@@ -303,40 +286,23 @@ def health():
 
 
 # ============================================================
-# 🚀 NEW ADDITION — LEARNING GAP PROMPT + ENDPOINT
+# 🚀 UPDATED — LEARNING GAP PROMPT + ENDPOINT
 # ============================================================
 
 def build_learning_gap_prompt(gap_json, student_name):
     return f"""
-You are 30 Years experienced NEETPG Coaching Guru who trained a Million Doctors for NEETPG Exam and know the trajectory of NEETPG Aspirants are various levels of Preparation from Start to the day of exam when he completed all the High Yield topics , PYQs, mastered concepts and perfected the High tILED FACTS . 
+You are 30 Years experienced NEETPG Coaching Guru who trained a Million Doctors for NEETPG Exam and know the trajectory of NEETPG Aspirants at various levels of preparation—from the start of their journey to the day of exam when they have mastered all the High Yield topics, PYQs, integrated concepts, and perfected the high-yield facts. 
 
-Advise this Student based on Progress metrics.  
-Address the student directly by Name {student_name}.
+Advise this Student based on the performance metrics.  
+Address the student directly by Name: {student_name}.
 
-Use these definitions from the deep learning gap analysis:
-• avg_time_per_mcq = average minutes taken for each wrong MCQ  
-• avg_expected_time = benchmark 1 minute per MCQ  
-• time_stress_index = avg_time_per_mcq ÷ 1  
-• error_type_breakdown:
-    — factual = wrong due to missing facts  
-    — interpretation = wrong due to misunderstanding  
-    — careless = wrong despite knowing  
-    — time_pressure = wrong due to >2 min delay  
+Use these definitions derived from deep learning-gap analysis: 
+avg_time_per_mcq = average minutes taken for each wrong MCQ.  
+avg_expected_time = benchmark 1 minute per MCQ.  
+time_stress_index = avg_time_per_mcq ÷ 1.  
+error_type_breakdown = {{ factual = wrong due to missing facts, interpretation = wrong due to misunderstanding, careless = wrong despite knowing, time_pressure = wrong due to >2 min delay }}.  
 
-Your output:
-Write a **crisp, powerful, emotionally intelligent 500-word mentor message** that:
-• analyses subject-wise learning gaps  
-• interprets error patterns deeply  
-• explains cognitive weaknesses (recall, reasoning, speed)  
-• predicts trajectory  
-• gives actionable strategy  
-• includes exam wisdom, anecdotes  
-• uses Unicode symbols (α, β, γ, Δ, Na⁺/K⁺, x², etc.)  
-• reflects 30 years of training 1 million doctors  
-
-Do NOT repeat JSON.  
-Do NOT write headings.  
-Write as a continuous mentor letter to {student_name}.
+Make your message crisp, powerful, emotionally intelligent and exactly 500 words total. Use Unicode symbols (α, β, γ, Δ, Na⁺/K⁺, x², etc.). Do NOT repeat JSON. Do NOT use headings. Write as a continuous mentor letter addressed personally to {student_name}.
 
 STUDENT DATA:
 {gap_json}
@@ -365,7 +331,6 @@ def get_learning_gap_analysis(request: ProgressRequest):
     student_id = request.student_id
     student_name = request.student_name
 
-    # Cached Learning Gap Comment < 24h
     cached = (
         supabase.table("analysis_comments")
         .select("*")
@@ -396,7 +361,6 @@ def get_learning_gap_analysis(request: ProgressRequest):
                 "data": gap_json,
             }
 
-    # Fresh Data
     rpc_res = supabase.rpc(
         "get_deep_learning_gap",
         {"student_id": student_id}
@@ -407,10 +371,8 @@ def get_learning_gap_analysis(request: ProgressRequest):
 
     gap_json = rpc_res.data
 
-    # Generate Comment
     mentor_comment = generate_learning_gap_comment(gap_json, student_name)
 
-    # Save in DB
     supabase.table("analysis_comments").insert({
         "student_id": student_id,
         "student_name": student_name,
