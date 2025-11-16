@@ -9,7 +9,7 @@ import json
 # ───────────────────────────────
 # APP SETUP
 # ───────────────────────────────
-app = FastAPI(title="Mock Test Orchestra API", version="1.3.0")
+app = FastAPI(title="Mock Test Orchestra API", version="1.3.1")
 
 app.add_middleware(
     CORSMiddleware,
@@ -133,7 +133,20 @@ async def mocktest_orchestrate(request: Request):
                 .execute()
             )
             existing = res.data if hasattr(res, "data") else None
-            convo_log = existing.get("conversation_log", []) if existing else []
+
+            # ✅ Defensive parsing — decode double-encoded logs safely
+            convo_raw = existing.get("conversation_log") if existing else []
+            if isinstance(convo_raw, str):
+                try:
+                    convo_log = json.loads(convo_raw)
+                    if isinstance(convo_log, str):
+                        convo_log = json.loads(convo_log)
+                except Exception:
+                    convo_log = []
+            elif isinstance(convo_raw, list):
+                convo_log = convo_raw
+            else:
+                convo_log = []
 
             # Step 2: Append student message
             convo_log.append({
@@ -180,7 +193,7 @@ Student’s question: {message}
                 "ts": datetime.utcnow().isoformat() + "Z",
             })
 
-            # Step 5: Insert or update Supabase
+            # Step 5: Insert or update Supabase (✅ json.dumps to store proper JSONB)
             try:
                 if not existing:
                     insert_data = {
@@ -188,14 +201,14 @@ Student’s question: {message}
                         "exam_serial": exam_serial,
                         "mcq_id": mcq_id,
                         "phase_json": json.dumps({"stem": stem_text}),
-                        "conversation_log": convo_log,
+                        "conversation_log": json.dumps(convo_log),  # ✅ fixed
                         "created_at": datetime.utcnow().isoformat() + "Z",
                     }
                     supabase.table("mock_test_review_conversation").insert(insert_data).execute()
                     print("🟢 Inserted new review conversation row.")
                 else:
                     supabase.table("mock_test_review_conversation").update({
-                        "conversation_log": convo_log,
+                        "conversation_log": json.dumps(convo_log),  # ✅ fixed
                         "updated_at": datetime.utcnow().isoformat() + "Z",
                     }).eq("id", existing["id"]).execute()
                     print("🟡 Updated existing review conversation row.")
@@ -247,4 +260,4 @@ Student’s question: {message}
 # ───────────────────────────────
 @app.get("/")
 def home():
-    return {"message": "🧠 Mock Test Orchestra API v1.3.0 — with chat_review_mocktest enabled!"}
+    return {"message": "🧠 Mock Test Orchestra API v1.3.1 — json.dumps fix + double decode safeguard ✅"}
