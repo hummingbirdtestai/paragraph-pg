@@ -299,3 +299,127 @@ def get_accuracy_analysis(request: ProgressRequest):
 @app.get("/")
 def health():
     return {"status": "Practice Progress API running 🚀"}
+
+
+
+# ============================================================
+# 🚀 NEW ADDITION — LEARNING GAP PROMPT + ENDPOINT
+# ============================================================
+
+def build_learning_gap_prompt(gap_json, student_name):
+    return f"""
+You are 30 Years experienced NEETPG Coaching Guru who trained a Million Doctors for NEETPG Exam and know the trajectory of NEETPG Aspirants are various levels of Preparation from Start to the day of exam when he completed all the High Yield topics , PYQs, mastered concepts and perfected the High tILED FACTS . 
+
+Advise this Student based on Progress metrics.  
+Address the student directly by Name {student_name}.
+
+Use these definitions from the deep learning gap analysis:
+• avg_time_per_mcq = average minutes taken for each wrong MCQ  
+• avg_expected_time = benchmark 1 minute per MCQ  
+• time_stress_index = avg_time_per_mcq ÷ 1  
+• error_type_breakdown:
+    — factual = wrong due to missing facts  
+    — interpretation = wrong due to misunderstanding  
+    — careless = wrong despite knowing  
+    — time_pressure = wrong due to >2 min delay  
+
+Your output:
+Write a **crisp, powerful, emotionally intelligent 500-word mentor message** that:
+• analyses subject-wise learning gaps  
+• interprets error patterns deeply  
+• explains cognitive weaknesses (recall, reasoning, speed)  
+• predicts trajectory  
+• gives actionable strategy  
+• includes exam wisdom, anecdotes  
+• uses Unicode symbols (α, β, γ, Δ, Na⁺/K⁺, x², etc.)  
+• reflects 30 years of training 1 million doctors  
+
+Do NOT repeat JSON.  
+Do NOT write headings.  
+Write as a continuous mentor letter to {student_name}.
+
+STUDENT DATA:
+{gap_json}
+"""
+
+
+def generate_learning_gap_comment(gap_json, student_name):
+    prompt = build_learning_gap_prompt(gap_json, student_name)
+
+    completion = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7,
+    )
+
+    return completion.choices[0].message.content.strip()
+
+
+
+# -------------------------
+# NEW ENDPOINT — LEARNING GAP ANALYSIS
+# -------------------------
+@app.post("/learning-gap/analysis")
+def get_learning_gap_analysis(request: ProgressRequest):
+
+    student_id = request.student_id
+    student_name = request.student_name
+
+    # Cached Learning Gap Comment < 24h
+    cached = (
+        supabase.table("analysis_comments")
+        .select("*")
+        .eq("student_id", student_id)
+        .eq("comment_type", "learning_gap")
+        .order("updated_at", desc=True)
+        .execute()
+    )
+
+    if cached.data:
+        entry = cached.data[0]
+        ts = entry["updated_at"].replace("Z", "+00:00")
+        last_time = datetime.datetime.fromisoformat(ts)
+        now = datetime.datetime.now(datetime.timezone.utc)
+
+        if (now - last_time) < datetime.timedelta(hours=24):
+
+            rpc_res = supabase.rpc(
+                "get_deep_learning_gap",
+                {"student_id": student_id}
+            ).execute()
+
+            gap_json = rpc_res.data
+
+            return {
+                "source": "cached",
+                "mentor_comment": entry["mentor_comment"],
+                "data": gap_json,
+            }
+
+    # Fresh Data
+    rpc_res = supabase.rpc(
+        "get_deep_learning_gap",
+        {"student_id": student_id}
+    ).execute()
+
+    if rpc_res.data is None:
+        raise HTTPException(400, "RPC returned no data")
+
+    gap_json = rpc_res.data
+
+    # Generate Comment
+    mentor_comment = generate_learning_gap_comment(gap_json, student_name)
+
+    # Save in DB
+    supabase.table("analysis_comments").insert({
+        "student_id": student_id,
+        "student_name": student_name,
+        "mentor_comment": mentor_comment,
+        "comment_type": "learning_gap"
+    }).execute()
+
+    return {
+        "source": "fresh",
+        "mentor_comment": mentor_comment,
+        "data": gap_json
+    }
