@@ -497,3 +497,110 @@ def get_mocktest_results(request: ProgressRequest):
         "mentor_comment": mentor_comment,
         "data": mocktest_json
     }
+# ============================================================
+# MOCKTEST PERFORMANCE — NEW
+# ============================================================
+
+def build_mocktest_prompt(mocktest_json, student_name):
+    return f"""
+You are a 30 Years experienced NEETPG Coaching Guru who trained a Million Doctors at all stages of their NEETPG journey.
+These are the student's full-scale mock-test performance metrics.
+
+Address the student directly by Name: {student_name}.
+
+Use these definitions:
+• total_questions = MCQs asked  
+• answered = attempted  
+• skipped = left unattempted  
+• correct_answers = correct  
+• wrong_answers = incorrect  
+• total_score = (correct × 4) − wrong  
+• accuracy_percent = (correct ÷ answered × 100)  
+• attempt_rate_percent = (answered ÷ total_questions × 100)  
+• avg_time_per_mcq = average minutes per MCQ  
+• time_spent_min = total minutes spent  
+• time_eff_percent = (1 ÷ avg_time_per_mcq × 100)  
+• effort_eff_percent = percent of max possible score obtained  
+
+Write a powerful, emotionally intelligent, 500-word continuous mentor letter.
+Do NOT repeat the JSON.
+Do NOT use headings.
+
+STUDENT DATA:
+{mocktest_json}
+"""
+
+
+def generate_mocktest_comment(mocktest_json, student_name):
+    prompt = build_mocktest_prompt(mocktest_json, student_name)
+    completion = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7,
+    )
+    return completion.choices[0].message.content.strip()
+
+
+@app.post("/mocktest/performance")
+def get_mocktest_performance(request: ProgressRequest):
+
+    student_id = request.student_id
+    student_name = request.student_name
+
+    # ---- CACHE CHECK ----
+    cached = (
+        supabase.table("analysis_comments")
+        .select("*")
+        .eq("student_id", student_id)
+        .eq("comment_type", "mocktest_performance")
+        .order("updated_at", desc=True)
+        .execute()
+    )
+
+    if cached.data:
+        entry = cached.data[0]
+
+        ts = entry["updated_at"].replace("Z", "+00:00")
+        last = datetime.datetime.fromisoformat(ts)
+        now = datetime.datetime.now(datetime.timezone.utc)
+
+        # < 24 hours → use cache
+        if (now - last) < datetime.timedelta(hours=24):
+
+            rpc_res = supabase.rpc(
+                "get_mock_test_performance_summary",
+                {"student_id": student_id}
+            ).execute()
+
+            return {
+                "source": "cached",
+                "mentor_comment": entry["mentor_comment"],
+                "data": rpc_res.data,
+            }
+
+    # ---- FRESH RPC ----
+    rpc_res = supabase.rpc(
+        "get_mock_test_performance_summary",
+        {"student_id": student_id}
+    ).execute()
+
+    mock_json = rpc_res.data
+    if mock_json is None:
+        raise HTTPException(400, "RPC returned no data")
+
+    mentor_comment = generate_mocktest_comment(mock_json, student_name)
+
+    # ---- SAVE ----
+    supabase.table("analysis_comments").insert({
+        "student_id": student_id,
+        "student_name": student_name,
+        "mentor_comment": mentor_comment,
+        "comment_type": "mocktest_performance"
+    }).execute()
+
+    return {
+        "source": "fresh",
+        "mentor_comment": mentor_comment,
+        "data": mock_json
+    }
+
