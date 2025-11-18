@@ -1,7 +1,7 @@
 # --- Core Web Framework ---
-fastapi
-uvicorn[standard]
-starlette
+fastapi>=0.110.0
+uvicorn>=0.22.0
+starlette>=0.37.2
 
 # --- Environment & HTTP Utilities ---
 python-dotenv
