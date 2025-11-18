@@ -1,7 +1,7 @@
 # --- Core Web Framework ---
-fastapi>=0.110.0
-uvicorn>=0.22.0
-starlette>=0.37.2
+fastapi
+uvicorn[standard]
+starlette
 
 # --- Environment & HTTP Utilities ---
 python-dotenv
@@ -12,9 +12,6 @@ httpx
 supabase>=2.3.4
 psycopg2-binary
 pandas
-
-# --- Supabase Realtime Subscriber (NEEDED for battle system) ---
-realtime-py
 
 # --- LangChain + OpenAI Ecosystem ---
 langchain>=0.2.0
