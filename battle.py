@@ -4,9 +4,6 @@ from supabase import create_client, Client
 from dotenv import load_dotenv
 import os, asyncio, logging, requests, time, jwt, json
 
-# ⭐ NEW IMPORT
-from supabase_realtime import RealtimeClient
-
 # -----------------------------------------------------
 # 🔧 Setup
 # -----------------------------------------------------
@@ -47,38 +44,10 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 active_battles = set()
 
 # -----------------------------------------------------
-# ⭐ NEW — Keep realtime subscribers alive
-# -----------------------------------------------------
-battle_realtime_clients = {}
-
-async def ensure_battle_subscription(battle_id: str):
-    """Ensure FastAPI subscribes to battle:<id> channel BEFORE orchestrator starts."""
-    if battle_id in battle_realtime_clients:
-        return  # Already subscribed
-
-    try:
-        url = SUPABASE_URL.replace("https://", "wss://") + "/realtime/v1/websocket"
-
-        client = RealtimeClient(
-            url=url,
-            apikey=SUPABASE_ANON_KEY,   # works for subscription
-            params={"vsn": "1.0.0"},
-        )
-
-        # Subscribe to this specific battle channel
-        client.channel(f"battle:{battle_id}").join()
-        asyncio.create_task(client.connect())
-
-        battle_realtime_clients[battle_id] = client
-        logger.info(f"🌐 FastAPI subscribed to battle:{battle_id}")
-
-    except Exception as e:
-        logger.error(f"❌ Failed realtime subscription for battle {battle_id}: {e}")
-
-# -----------------------------------------------------
 # 🔹 Helper: Generate Realtime JWT (aud = realtime)
 # -----------------------------------------------------
 def get_realtime_jwt():
+    """Generate short-lived JWT accepted by Supabase Realtime REST API."""
     try:
         decoded = jwt.decode(SUPABASE_SERVICE_KEY, options={"verify_signature": False})
         project_ref = decoded.get("ref")
@@ -100,6 +69,7 @@ def get_realtime_jwt():
 # 🔹 Broadcast Helper
 # -----------------------------------------------------
 def broadcast_event(battle_id: str, event: str, payload: dict):
+    """Send broadcast event to Supabase Realtime channel."""
     try:
         body = {
             "messages": [
@@ -146,9 +116,8 @@ async def root():
     return {"status": "Battle API running ✅"}
 
 # -----------------------------------------------------
-# 🔹 Utility Endpoints (unchanged)
+# 🔹 Utility Endpoints
 # -----------------------------------------------------
-
 @app.post("/battle/get_stats")
 async def get_battle_stats(mcq_id: str):
     logger.info(f"📊 get_battle_stats called with mcq_id={mcq_id}")
@@ -174,15 +143,11 @@ async def get_leaderboard(battle_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 # -----------------------------------------------------
-# 🔹 Battle Start Endpoint (UPDATED HERE)
+# 🔹 Battle Start Endpoint
 # -----------------------------------------------------
 @app.post("/battle/start/{battle_id}")
 async def start_battle(battle_id: str, background_tasks: BackgroundTasks):
     logger.info(f"🚀 /battle/start called for battle_id={battle_id}")
-
-    # ⭐ NEW — Ensure FastAPI subscribes before orchestrator starts
-    await ensure_battle_subscription(battle_id)
-
     try:
         participants_resp = (
             supabase.table("battle_participants")
@@ -229,10 +194,18 @@ async def start_battle(battle_id: str, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=500, detail=str(e))
 
 # -----------------------------------------------------
-# 🔹 Battle Review Endpoint (unchanged)
+# 🔹 Battle Review Endpoint (NEW)
 # -----------------------------------------------------
 @app.post("/battle/review")
 async def get_battle_review(data: dict):
+    """
+    Expected JSON body:
+    {
+      "title": "Patho Premier League 🔬🏆",
+      "scheduled_date": "2025-11-12",
+      "student_id": "uuid-of-student"
+    }
+    """
     title = data.get("title")
     date = data.get("scheduled_date")
     student_id = data.get("student_id")
@@ -260,9 +233,10 @@ async def get_battle_review(data: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 # -----------------------------------------------------
-# 🔹 Orchestrator Loop (unchanged)
+# 🔹 Main Orchestrator Loop
 # -----------------------------------------------------
 async def run_battle_sequence(battle_id: str):
+    """start_orchestra → +20s get_bar_graph → +10s get_leader_board → +10s get_next_mcq → repeat"""
     logger.info(f"🏁 Orchestrator started for battle_id={battle_id}")
     try:
         current = supabase.rpc("get_first_mcq", {"battle_id_input": battle_id}).execute()
