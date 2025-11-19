@@ -110,7 +110,7 @@ async def root():
     return {"status": "Battle API running (AutoStart + State Sync) 🚀"}
 
 # -----------------------------------------------------
-# 🔹 Fetch Battle State (Mid-Join Sync)
+# 🔹 Fetch Battle State
 # -----------------------------------------------------
 @app.get("/battle/state/{battle_id}")
 async def get_battle_state(battle_id: str):
@@ -120,7 +120,7 @@ async def get_battle_state(battle_id: str):
     return resp.data
 
 # -----------------------------------------------------
-# ❌ Manual Start Disabled (AutoStart Only)
+# ❌ Manual Start Disabled
 # -----------------------------------------------------
 @app.post("/battle/start/{battle_id}")
 async def start_battle(battle_id: str):
@@ -145,26 +145,37 @@ async def auto_start_battle(battle_id: str, background_tasks: BackgroundTasks):
     return {"success": True}
 
 # -----------------------------------------------------
-# 🔍 Minute-wise AutoStart Checker (Testing Mode)
+# 🔍 Minute-wise AutoStart Checker (FIXED)
 # -----------------------------------------------------
 def minute_check_auto_starter():
     now = datetime.now(ist)
     today = now.date().isoformat()
-    time_str = now.strftime("%H:%M:00")  # match scheduled_time
+    time_str = now.strftime("%H:%M:%00")  # match scheduled_time
 
     logger.info(f"⏱️ Checking for battles at {time_str}")
 
+    # FIX 1 → replace .single() with .execute()
     resp = supabase.table("battle_schedule") \
         .select("battle_id,status") \
         .eq("scheduled_date", today) \
         .eq("scheduled_time", time_str) \
-        .single().execute()
+        .execute()
 
-    if not resp.data:
+    rows = resp.data or []
+
+    # No rows
+    if len(rows) == 0:
+        logger.info("⛔ No battle scheduled at this time")
         return
 
-    battle_id = resp.data["battle_id"]
-    status = resp.data["status"]
+    # More than 1 row → avoid crash
+    if len(rows) > 1:
+        logger.error("🚨 Multiple battles scheduled at same time! Check DB.")
+        return
+
+    row = rows[0]
+    battle_id = row["battle_id"]
+    status = row["status"]
 
     if status.lower() == "upcoming":
         logger.info(f"🤖 Auto-starting battle → {battle_id}")
@@ -191,7 +202,7 @@ def update_battle_state(battle_id: str, phase: str, question=None, stats=None, l
     }).execute()
 
 # -----------------------------------------------------
-# 🔹 Main Orchestrator (MCQ → Stats → Leaderboard → Next)
+# 🔹 Main Orchestrator (unchanged)
 # -----------------------------------------------------
 async def run_battle_sequence(battle_id: str):
     logger.info(f"🏁 Orchestrator started → {battle_id}")
@@ -203,57 +214,40 @@ async def run_battle_sequence(battle_id: str):
             broadcast_event(battle_id, "battle_end", {"message": "No MCQs found"})
             return
 
-        # Loop through questions
         while current.data:
             mcq = current.data[0]
             react_order = mcq.get("react_order", 0)
             mcq_id = mcq["mcq_id"]
 
-            # ---------------------------
-            # 🟩 Phase: Question (20 sec)
-            # ---------------------------
+            # 🟩 Question
             broadcast_event(battle_id, "new_question", mcq)
-            update_battle_state(
-                battle_id,
-                phase="question",
-                question=mcq,
-                index=react_order,
-                time_left=20
-            )
+            update_battle_state(battle_id, "question", question=mcq, index=react_order, time_left=20)
 
-            for remaining in range(20, 0, -1):
-                update_battle_state(battle_id, "question", mcq, time_left=remaining, index=react_order)
+            for r in range(20, 0, -1):
+                update_battle_state(battle_id, "question", question=mcq, time_left=r, index=react_order)
                 await asyncio.sleep(1)
 
-            # ---------------------------
-            # 🟧 Phase: Stats / Bar Graph (10 sec)
-            # ---------------------------
+            # 🟧 Stats
             bar = supabase.rpc("get_battle_stats", {"mcq_id_input": mcq_id}).execute().data or []
             bar_payload = bar[0] if bar else {}
-
             broadcast_event(battle_id, "show_stats", bar_payload)
             update_battle_state(battle_id, "stats", stats=bar_payload, time_left=10)
 
-            for remaining in range(10, 0, -1):
-                update_battle_state(battle_id, "stats", stats=bar_payload, time_left=remaining)
+            for r in range(10, 0, -1):
+                update_battle_state(battle_id, "stats", stats=bar_payload, time_left=r)
                 await asyncio.sleep(1)
 
-            # ---------------------------
-            # 🟦 Phase: Leaderboard (10 sec)
-            # ---------------------------
+            # 🟦 Leaderboard
             lead = supabase.rpc("get_leader_board", {"battle_id_input": battle_id}).execute().data or []
             lead_payload = lead[0] if lead else {}
-
             broadcast_event(battle_id, "update_leaderboard", lead_payload)
             update_battle_state(battle_id, "leaderboard", leaderboard=lead_payload, time_left=10)
 
-            for remaining in range(10, 0, -1):
-                update_battle_state(battle_id, "leaderboard", leaderboard=lead_payload, time_left=remaining)
+            for r in range(10, 0, -1):
+                update_battle_state(battle_id, "leaderboard", leaderboard=lead_payload, time_left=r)
                 await asyncio.sleep(1)
 
-            # ---------------------------
-            # 🔁 Next Question
-            # ---------------------------
+            # 🔁 Next
             next_q = supabase.rpc(
                 "get_next_mcq",
                 {"battle_id_input": battle_id, "react_order_input": react_order}
@@ -263,11 +257,8 @@ async def run_battle_sequence(battle_id: str):
                 current = next_q
                 continue
 
-            # ---------------------------
-            # 🏁 Battle Completed
-            # ---------------------------
+            # 🏁 End
             supabase.table("battle_schedule").update({"status": "Completed"}).eq("battle_id", battle_id).execute()
-
             update_battle_state(battle_id, "ended", time_left=0)
             broadcast_event(battle_id, "battle_end", {"message": "🏁 Battle Completed"})
             break
