@@ -150,7 +150,7 @@ async def auto_start_battle(battle_id: str, background_tasks: BackgroundTasks):
 def minute_check_auto_starter():
     now = datetime.now(ist)
     today = now.date().isoformat()
-    time_str = now.strftime("%H:%M:%00")  # match scheduled_time
+    time_str = now.strftime("%H:%M:00")
 
     logger.info(f"⏱️ Checking for battles at {time_str}")
 
