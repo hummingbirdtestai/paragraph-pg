@@ -180,7 +180,7 @@ def minute_check_auto_starter():
     if status.lower() == "upcoming":
         logger.info(f"🤖 Auto-starting battle → {battle_id}")
         try:
-            requests.post(f"http://localhost:8000/battle/auto_start/{battle_id}")
+            requests.post(f"http://localhost:8003/battle/auto_start/{battle_id}")
         except Exception as e:
             logger.error(f"⚠️ Auto-start trigger failed: {e}")
 
