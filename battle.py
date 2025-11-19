@@ -239,7 +239,7 @@ async def run_battle_sequence(battle_id: str):
 
             # 🟦 Leaderboard
             lead = supabase.rpc("get_leader_board", {"battle_id_input": battle_id}).execute().data or []
-            lead_payload = lead[0] if lead else {}
+            lead_payload = lead
             broadcast_event(battle_id, "update_leaderboard", lead_payload)
             update_battle_state(battle_id, "leaderboard", leaderboard=lead_payload, time_left=10)
 
