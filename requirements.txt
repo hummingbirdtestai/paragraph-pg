@@ -8,16 +8,14 @@ python-dotenv
 requests
 httpx
 
-# --- Database / Supabase (modular SDK for Python 3.12+) ---
+# --- Database / Supabase ---
 supabase>=2.3.4
 psycopg2-binary
 pandas
 
-# --- LangChain + OpenAI Ecosystem ---
-langchain>=0.2.0
-langchain-community>=0.2.0
-langchain-openai>=0.2.0
-langchain-experimental>=0.0.56
+# --- Scheduling & Timezone ---
+APScheduler==3.10.4
+pytz
 
 # --- Visualization (optional) ---
 matplotlib
