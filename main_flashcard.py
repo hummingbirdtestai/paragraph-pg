@@ -213,7 +213,7 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
         })
 
         if not rpc_data:
-            return {"error": "❌ get_bookmarked_flashcards failed"}
+            return None
 
         return make_json_safe(rpc_data)
 
