@@ -231,8 +231,8 @@ Student’s question: {message}
         print("📦 Raw RPC Result:", result)
 
         if not result:
-            print("⚠️ RPC returned no data or None.")
-            return {"error": "RPC returned no data."}
+            print("🎉 No more questions — Review complete")
+            return {"message": "review_complete"}
 
         if isinstance(result, str):
             try:
@@ -244,8 +244,8 @@ Student’s question: {message}
 
         if isinstance(result, dict):
             if "message" in result and "✅ Review complete" in result["message"]:
-                print("🎉 Review cycle complete — returning success message.")
-                return {"message": "✅ Review complete"}
+                print("🎉 Review cycle complete — returning success signal.")
+                return {"message": "review_complete"}
 
         return result
 
