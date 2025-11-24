@@ -127,7 +127,7 @@ Guide the student concisely in Markdown.
         return {"bookmarked_concepts": [row] if row else []}
 
     # ───────────────────────────────────────────
-    # 5️⃣ REVIEW COMPLETED — START (✅ now with seq + total)
+    # 5️⃣ REVIEW COMPLETED — START
     # ───────────────────────────────────────────
     elif action == "review_upto_start":
         rows = (
@@ -148,11 +148,10 @@ Guide the student concisely in Markdown.
             row["seq_num"] = i + 1
             row["total_count"] = total
 
-        # first one
         return {"review_upto": [rows[0]]}
 
     # ───────────────────────────────────────────
-    # 6️⃣ REVIEW COMPLETED — NEXT (✅ now with seq + total)
+    # 6️⃣ REVIEW COMPLETED — NEXT
     # ───────────────────────────────────────────
     elif action == "review_upto_next":
         current_order = payload.get("react_order_final")
@@ -183,10 +182,10 @@ Guide the student concisely in Markdown.
         return {"review_upto": [next_row] if next_row else []}
 
     # ───────────────────────────────────────────
-    # 7️⃣ WRONG MCQs START
+    # 7️⃣ WRONG MCQs START (⭐ FIXED WITH seq_num + total_count)
     # ───────────────────────────────────────────
     elif action == "wrong_mcqs_start":
-        row = (
+        rows = (
             supabase.table("student_phase_pointer")
             .select("*")
             .eq("student_id", student_id)
@@ -194,29 +193,52 @@ Guide the student concisely in Markdown.
             .eq("phase_type", "mcq")
             .eq("is_correct", False)
             .order("react_order_final", desc=False)
-            .limit(1)
             .execute()
-        )
-        return {"wrong_mcqs": row.data or []}
+        ).data
+
+        if not rows:
+            return {"wrong_mcqs": []}
+
+        total = len(rows)
+
+        for i, r in enumerate(rows):
+            r["seq_num"] = i + 1
+            r["total_count"] = total
+
+        return {"wrong_mcqs": [rows[0]]}
 
     # ───────────────────────────────────────────
-    # 8️⃣ WRONG MCQs NEXT
+    # 8️⃣ WRONG MCQs NEXT (⭐ FIXED WITH seq_num + total_count)
     # ───────────────────────────────────────────
     elif action == "wrong_mcqs_next":
         current_order = payload.get("react_order_final")
-        row = (
+
+        rows = (
             supabase.table("student_phase_pointer")
             .select("*")
             .eq("student_id", student_id)
             .eq("subject_id", subject_id)
             .eq("phase_type", "mcq")
             .eq("is_correct", False)
-            .gt("react_order_final", current_order)
             .order("react_order_final", desc=False)
-            .limit(1)
             .execute()
+        ).data
+
+        if not rows:
+            return {"wrong_mcqs": []}
+
+        total = len(rows)
+
+        for i, r in enumerate(rows):
+            r["seq_num"] = i + 1
+            r["total_count"] = total
+
+        next_row = next(
+            (r for r in rows if r["react_order_final"] > current_order),
+            None
         )
-        return {"wrong_mcqs": row.data or []}
+
+        return {"wrong_mcqs": [next_row] if next_row else []}
 
     # ───────────────────────────────────────────
     # 9️⃣ REVIEW CHAT (Unified)
@@ -241,7 +263,6 @@ Guide the student concisely in Markdown.
         pointer_id = pointer["pointer_id"]
         convo = pointer.get("conversation_log", [])
 
-        # No message? just return previous convo
         if not message or not message.strip():
             return {"existing_conversation": convo}
 
