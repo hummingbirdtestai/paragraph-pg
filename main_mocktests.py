@@ -121,6 +121,52 @@ async def mocktest_orchestrate(request: Request):
                 "p_react_order": react_order_final
             })
 
+                # ───────────────────────────────
+        # 4️⃣ BOOKMARK DURING REVIEW
+        # ───────────────────────────────
+        elif action == "bookmark_review_mocktest":
+            print("🔖 Bookmark Review Triggered")
+
+            if not student_id or not exam_serial or not mcq_id:
+                return {"error": "❌ Missing required fields"}
+
+            is_bookmarked = payload.get("is_bookmarked", False)
+
+            # 1️⃣ Check if row exists
+            res = (
+                supabase.table("mock_test_review_conversation")
+                .select("id")
+                .eq("student_id", student_id)
+                .eq("exam_serial", exam_serial)
+                .eq("mcq_id", mcq_id)
+                .maybe_single()
+                .execute()
+            )
+            existing = res.data if hasattr(res, "data") else None
+
+            # 2️⃣ Insert if missing
+            if not existing:
+                supabase.table("mock_test_review_conversation").insert({
+                    "student_id": student_id,
+                    "exam_serial": exam_serial,
+                    "mcq_id": mcq_id,
+                    "is_bookmarked": is_bookmarked,
+                    "conversation_log": "[]",
+                    "phase_json": None,
+                    "created_at": datetime.utcnow().isoformat() + "Z",
+                }).execute()
+                print("🟢 Created new row with bookmark flag.")
+            else:
+                # 3️⃣ Update existing row
+                supabase.table("mock_test_review_conversation").update({
+                    "is_bookmarked": is_bookmarked,
+                    "updated_at": datetime.utcnow().isoformat() + "Z",
+                }).eq("id", existing["id"]).execute()
+                print("🟡 Updated bookmark flag.")
+
+            return {"success": True, "is_bookmarked": is_bookmarked}
+
+
         # ───────────────────────────────
         # 3️⃣ CHAT DURING REVIEW
         # ───────────────────────────────
