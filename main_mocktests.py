@@ -85,6 +85,16 @@ async def mocktest_orchestrate(request: Request):
                 "p_time_left": str(time_left)
             })
 
+        elif action == "mark_review":
+            print("🟠 Calling RPC → mark_review_mocktest")
+            result = call_rpc("mark_review_mocktest", {
+                "p_student_id": student_id,
+                "p_exam_serial": exam_serial,
+                "p_react_order_final": react_order_final,
+                "p_time_left": str(time_left)
+            })
+
+
         # ───────────────────────────────
         # 2️⃣ REVIEW MODE (POST-COMPLETION)
         # ───────────────────────────────
