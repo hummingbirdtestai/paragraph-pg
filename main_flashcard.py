@@ -11,11 +11,12 @@ import json, uuid
 app = FastAPI(title="Flashcard Orchestra API", version="4.1.0")
 
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    CORSMiddleware(
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 )
 
 # ───────────────────────────────────────────────
@@ -48,10 +49,10 @@ async def flashcard_orchestrate(request: Request):
     # 1️⃣ START FLASHCARD LEARNING FLOW
     # ======================================================
     if action == "start_flashcard":
-        rpc_data = call_rpc("start_flashcard_orchestra", {
-            "p_student_id": student_id,
-            "p_subject_id": subject_id
-        })
+        rpc_data = call_rpc(
+            "start_flashcard_orchestra",
+            {"p_student_id": student_id, "p_subject_id": subject_id},
+        )
 
         if not rpc_data:
             return {"error": "❌ start_flashcard_orchestra RPC failed"}
@@ -61,13 +62,16 @@ async def flashcard_orchestrate(request: Request):
 
         # UPDATE POINTER
         try:
-            call_rpc("update_flashcard_pointer_status", {
-                "p_student_id": student_id,
-                "p_subject_id": subject_id,
-                "p_react_order_final": rpc_data.get("react_order_final"),
-                "p_phase_json": safe_phase,
-                "p_mentor_reply": safe_reply
-            })
+            call_rpc(
+                "update_flashcard_pointer_status",
+                {
+                    "p_student_id": student_id,
+                    "p_subject_id": subject_id,
+                    "p_react_order_final": rpc_data.get("react_order_final"),
+                    "p_phase_json": safe_phase,
+                    "p_mentor_reply": safe_reply,
+                },
+            )
         except Exception as e:
             print(f"⚠️ update_flashcard_pointer_status failed: {e}")
 
@@ -80,7 +84,7 @@ async def flashcard_orchestrate(request: Request):
             "concept": rpc_data.get("concept"),
             "seq_num": rpc_data.get("seq_num"),
             "total_count": rpc_data.get("total_count"),
-            "phase_type": rpc_data.get("phase_type")
+            "phase_type": rpc_data.get("phase_type"),
         }
 
     # ======================================================
@@ -106,7 +110,13 @@ async def flashcard_orchestrate(request: Request):
             pointer = res.data[0]
             pointer_id = pointer["pointer_id"]
             convo_log = pointer.get("conversation_log", [])
-            convo_log.append({"role": "student", "content": message, "ts": datetime.utcnow().isoformat()})
+            convo_log.append(
+                {
+                    "role": "student",
+                    "content": message,
+                    "ts": datetime.utcnow().isoformat(),
+                }
+            )
         except Exception as e:
             print(f"⚠️ chat fetch failed: {e}")
             return {"error": "❌ Chat pointer fetch failed"}
@@ -124,30 +134,32 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
             mentor_reply = "⚠️ I'm facing a temporary glitch. Try again."
             status = "failed"
 
-        convo_log.append({"role": "assistant", "content": mentor_reply, "ts": datetime.utcnow().isoformat()})
+        convo_log.append(
+            {
+                "role": "assistant",
+                "content": mentor_reply,
+                "ts": datetime.utcnow().isoformat(),
+            }
+        )
 
         # UPDATE DB
         try:
-            supabase.table("student_flashcard_pointer")\
-                .update({"conversation_log": convo_log})\
-                .eq("pointer_id", pointer_id)\
-                .execute()
+            supabase.table("student_flashcard_pointer").update(
+                {"conversation_log": convo_log}
+            ).eq("pointer_id", pointer_id).execute()
         except Exception as e:
             print(f"⚠️ chat save failed: {e}")
 
-        return {
-            "mentor_reply": mentor_reply,
-            "status": status
-        }
+        return {"mentor_reply": mentor_reply, "status": status}
 
     # ======================================================
     # 3️⃣ NEXT FLASHCARD IN LEARNING FLOW
     # ======================================================
     elif action == "next_flashcard":
-        rpc_data = call_rpc("next_flashcard_orchestra", {
-            "p_student_id": student_id,
-            "p_subject_id": subject_id
-        })
+        rpc_data = call_rpc(
+            "next_flashcard_orchestra",
+            {"p_student_id": student_id, "p_subject_id": subject_id},
+        )
 
         if not rpc_data:
             return {"error": "❌ next_flashcard_orchestra RPC failed"}
@@ -157,13 +169,16 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
 
         # UPDATE POINTER
         try:
-            call_rpc("update_flashcard_pointer_status", {
-                "p_student_id": student_id,
-                "p_subject_id": subject_id,
-                "p_react_order_final": rpc_data.get("react_order_final"),
-                "p_phase_json": safe_phase,
-                "p_mentor_reply": safe_reply
-            })
+            call_rpc(
+                "update_flashcard_pointer_status",
+                {
+                    "p_student_id": student_id,
+                    "p_subject_id": subject_id,
+                    "p_react_order_final": rpc_data.get("react_order_final"),
+                    "p_phase_json": safe_phase,
+                    "p_mentor_reply": safe_reply,
+                },
+            )
         except Exception as e:
             print(f"⚠️ pointer update failed: {e}")
 
@@ -176,7 +191,7 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
             "concept": rpc_data.get("concept"),
             "seq_num": rpc_data.get("seq_num"),
             "total_count": rpc_data.get("total_count"),
-            "phase_type": rpc_data.get("phase_type")
+            "phase_type": rpc_data.get("phase_type"),
         }
 
     # ======================================================
@@ -184,10 +199,10 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
     # ======================================================
     elif action == "review_completed_start_flashcard":
         print("🔍 Fetching first completed flashcard via RPC…")
-        rpc_data = call_rpc("review_completed_start_flashcard", {
-            "p_student_id": student_id,
-            "p_subject_id": subject_id
-        })
+        rpc_data = call_rpc(
+            "review_completed_start_flashcard",
+            {"p_student_id": student_id, "p_subject_id": subject_id},
+        )
         return {"review_item": make_json_safe(rpc_data) if rpc_data else None}
 
     # ======================================================
@@ -195,22 +210,27 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
     # ======================================================
     elif action == "review_completed_next_flashcard":
         current_order = payload.get("react_order_final")
-        print(f"⏭ Fetching next completed flashcard after order {current_order}…")
-        rpc_data = call_rpc("review_completed_next_flashcard", {
-            "p_student_id": student_id,
-            "p_subject_id": subject_id,
-            "p_react_order_final": current_order
-        })
+        print(
+            f"⏭ Fetching next completed flashcard after order {current_order}…"
+        )
+        rpc_data = call_rpc(
+            "review_completed_next_flashcard",
+            {
+                "p_student_id": student_id,
+                "p_subject_id": subject_id,
+                "p_react_order_final": current_order,
+            },
+        )
         return {"review_item": make_json_safe(rpc_data) if rpc_data else None}
 
     # ======================================================
     # 6️⃣ BOOKMARK REVIEW — START
     # ======================================================
     elif action == "start_bookmarked_revision":
-        rpc_data = call_rpc("get_bookmarked_flashcards", {
-            "p_student_id": student_id,
-            "p_subject_id": subject_id
-        })
+        rpc_data = call_rpc(
+            "get_bookmarked_flashcards",
+            {"p_student_id": student_id, "p_subject_id": subject_id},
+        )
 
         if not rpc_data:
             return None
@@ -223,11 +243,14 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
     elif action == "next_bookmarked_flashcard":
         last_ts = payload.get("last_updated_time")
 
-        rpc_data = call_rpc("get_next_bookmarked_flashcard", {
-            "p_student_id": student_id,
-            "p_subject_id": subject_id,
-            "p_last_updated_time": last_ts
-        })
+        rpc_data = call_rpc(
+            "get_next_bookmarked_flashcard",
+            {
+                "p_student_id": student_id,
+                "p_subject_id": subject_id,
+                "p_last_updated_time": last_ts,
+            },
+        )
 
         return make_json_safe(rpc_data)
 
@@ -243,4 +266,6 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
 # ───────────────────────────────────────────────
 @app.get("/")
 def home():
-    return {"message": "🧠 Flashcard Orchestra API v4.1 running with enriched review flow ✅"}
+    return {
+        "message": "🧠 Flashcard Orchestra API v4.1 running with enriched review flow ✅"
+    }
