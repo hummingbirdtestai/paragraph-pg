@@ -195,7 +195,7 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
         }
 
     # ======================================================
-    # 4️⃣ REVIEW COMPLETED FLASHCARDS — START (🔁 via RPC)
+    # 4️⃣ REVIEW COMPLETED FLASHCARDS — START (UPDATED)
     # ======================================================
     elif action == "review_completed_start_flashcard":
         print("🔍 Fetching first completed flashcard via RPC…")
@@ -203,25 +203,48 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
             "review_completed_start_flashcard",
             {"p_student_id": student_id, "p_subject_id": subject_id},
         )
-        return {"review_item": make_json_safe(rpc_data) if rpc_data else None}
+
+        if not rpc_data:
+            return {
+                "review_item": None,
+                "review_completed": False,
+                "no_bookmarks": True
+            }
+
+        return {
+            "review_item": make_json_safe(rpc_data),
+            "review_completed": False,
+            "no_bookmarks": False
+        }
 
     # ======================================================
-    # 5️⃣ REVIEW COMPLETED FLASHCARDS — NEXT (🔁 via RPC)
+    # 5️⃣ REVIEW COMPLETED FLASHCARDS — NEXT (UPDATED)
     # ======================================================
     elif action == "review_completed_next_flashcard":
         current_order = payload.get("react_order_final")
         print(
             f"⏭ Fetching next completed flashcard after order {current_order}…"
         )
+
         rpc_data = call_rpc(
             "review_completed_next_flashcard",
             {
                 "p_student_id": student_id,
                 "p_subject_id": subject_id,
                 "p_react_order_final": current_order,
-            },
+            }
         )
-        return {"review_item": make_json_safe(rpc_data) if rpc_data else None}
+
+        if not rpc_data:
+            return {
+                "review_item": None,
+                "review_completed": True
+            }
+
+        return {
+            "review_item": make_json_safe(rpc_data),
+            "review_completed": False
+        }
 
     # ======================================================
     # 6️⃣ BOOKMARK REVIEW — START
