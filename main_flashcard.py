@@ -11,13 +11,13 @@ import json, uuid
 app = FastAPI(title="Flashcard Orchestra API", version="4.1.0")
 
 app.add_middleware(
-    CORSMiddleware(
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
+
 
 # ───────────────────────────────────────────────
 # JSON-safe UUID conversion
