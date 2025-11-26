@@ -162,7 +162,11 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
         )
 
         if not rpc_data:
-            return {"error": "❌ next_flashcard_orchestra RPC failed"}
+            return {
+                "completed": True,
+                "message": "All flashcards completed"
+            }
+
 
         safe_phase = make_json_safe(rpc_data.get("phase_json"))
         safe_reply = make_json_safe(rpc_data.get("mentor_reply"))
