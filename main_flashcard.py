@@ -85,6 +85,8 @@ async def flashcard_orchestrate(request: Request):
             "seq_num": rpc_data.get("seq_num"),
             "total_count": rpc_data.get("total_count"),
             "phase_type": rpc_data.get("phase_type"),
+            "element_id": rpc_data.get("element_id"),
+            "is_bookmark": rpc_data.get("is_bookmark"),
         }
 
     # ======================================================
@@ -196,6 +198,8 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
             "seq_num": rpc_data.get("seq_num"),
             "total_count": rpc_data.get("total_count"),
             "phase_type": rpc_data.get("phase_type"),
+            "element_id": rpc_data.get("element_id"),
+            "is_bookmark": rpc_data.get("is_bookmark"),
         }
 
     # ======================================================
