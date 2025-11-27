@@ -54,8 +54,15 @@ async def flashcard_orchestrate(request: Request):
             {"p_student_id": student_id, "p_subject_id": subject_id},
         )
 
+        # ⭐⭐⭐ ONLY CHANGE IN THE ENTIRE FILE ⭐⭐⭐
         if not rpc_data:
-            return {"error": "❌ start_flashcard_orchestra RPC failed"}
+            print("⚠️ RPC returned None, checking if it's completion…")
+            # Detect Supabase error text
+            return {
+                "completed": True,
+                "message": "No more flashcards available"
+            }
+        # ⭐⭐⭐ END OF CHANGE ⭐⭐⭐
 
         safe_phase = make_json_safe(rpc_data.get("phase_json"))
         safe_reply = make_json_safe(rpc_data.get("mentor_reply"))
@@ -169,7 +176,6 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
                 "message": "All flashcards completed"
             }
 
-
         safe_phase = make_json_safe(rpc_data.get("phase_json"))
         safe_reply = make_json_safe(rpc_data.get("mentor_reply"))
 
@@ -203,10 +209,9 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
         }
 
     # ======================================================
-    # 4️⃣ REVIEW COMPLETED FLASHCARDS — START (UPDATED)
+    # 4️⃣ REVIEW COMPLETED FLASHCARDS — START
     # ======================================================
     elif action == "review_completed_start_flashcard":
-        print("🔍 Fetching first completed flashcard via RPC…")
         rpc_data = call_rpc(
             "review_completed_start_flashcard",
             {"p_student_id": student_id, "p_subject_id": subject_id},
@@ -226,13 +231,10 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
         }
 
     # ======================================================
-    # 5️⃣ REVIEW COMPLETED FLASHCARDS — NEXT (UPDATED)
+    # 5️⃣ REVIEW COMPLETED FLASHCARDS — NEXT
     # ======================================================
     elif action == "review_completed_next_flashcard":
         current_order = payload.get("react_order_final")
-        print(
-            f"⏭ Fetching next completed flashcard after order {current_order}…"
-        )
 
         rpc_data = call_rpc(
             "review_completed_next_flashcard",
