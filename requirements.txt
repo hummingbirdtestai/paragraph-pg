@@ -16,6 +16,9 @@ pandas
 # --- GPT / LLM (Required for gpt_utils.py) ---
 openai>=1.52.2
 
+# --- File Uploads (REQUIRED for images) ---
+python-multipart
+
 # --- Scheduling & Timezone ---
 APScheduler==3.10.4
 pytz
