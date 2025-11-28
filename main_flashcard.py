@@ -376,7 +376,7 @@ Reply concisely (≤80 words), clinically relevant, exam-focused.
 
         try:
             mentor_reply = chat_with_gpt(prompt, convo_log)
-        except:
+        except Exception as e:
             print("🔥 GPT ERROR:", e)
             mentor_reply = "⚠️ I'm facing a temporary glitch. Try again."
 
