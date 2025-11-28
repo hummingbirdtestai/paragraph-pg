@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, Form
+from fastapi import FastAPI, APIRouter, UploadFile, File, Form
 from typing import List
 from openai import OpenAI
 from supabase import create_client, Client
@@ -6,15 +6,25 @@ import os
 import uuid
 import json
 
+# -----------------------------------------------------------
+# Initialize FastAPI App
+# -----------------------------------------------------------
+app = FastAPI(title="AI Feed Post Generator", version="1.0.0")
+
 router = APIRouter()
 
+# -----------------------------------------------------------
 # Initialize OpenAI + Supabase
+# -----------------------------------------------------------
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-supabase: Client = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_ANON_KEY"))
+supabase: Client = create_client(
+    os.getenv("SUPABASE_URL"),
+    os.getenv("SUPABASE_ANON_KEY")
+)
 
-# -------------------------------------------------------------------
-# 🔥 TOKEN-FRIENDLY PROMPT (Final Version)
-# -------------------------------------------------------------------
+# -----------------------------------------------------------
+# TOKEN-FRIENDLY PROMPT
+# -----------------------------------------------------------
 def build_prompt(content_text: str):
     return f"""
 Rewrite text for NEET-PG aspirants (clear, concise, exam-oriented). 
@@ -37,9 +47,9 @@ USER TEXT:
 """
 
 
-# -------------------------------------------------------------------
-# 🔥 ENDPOINT: Create AI-Processed Feed Post 
-# -------------------------------------------------------------------
+# -----------------------------------------------------------
+# ENDPOINT: CREATE FEED POST
+# -----------------------------------------------------------
 @router.post("/create_feed_post_ai")
 async def create_feed_post_ai(
     user_id: str = Form(...),
@@ -48,9 +58,9 @@ async def create_feed_post_ai(
     files: List[UploadFile] = File(None)
 ):
 
-    # ---------------------------------------------------------------
-    # 1️⃣ Upload Multiple Images to Supabase
-    # ---------------------------------------------------------------
+    # -------------------------------
+    # Upload images to Supabase
+    # -------------------------------
     media_urls = []
 
     if files:
@@ -58,7 +68,6 @@ async def create_feed_post_ai(
             ext = f.filename.split(".")[-1]
             file_name = f"{uuid.uuid4()}.{ext}"
             file_path = f"posts/{file_name}"
-
             file_bytes = await f.read()
 
             supabase.storage.from_("feed-posts").upload(
@@ -70,9 +79,9 @@ async def create_feed_post_ai(
             public = supabase.storage.from_("feed-posts").get_public_url(file_path)
             media_urls.append(public)
 
-    # ---------------------------------------------------------------
-    # 2️⃣ GPT: Rewrite + Hashtags + Subject
-    # ---------------------------------------------------------------
+    # -------------------------------
+    # GPT rewrite + hashtags + subject
+    # -------------------------------
     final_prompt = build_prompt(content_text)
 
     response = client.chat.completions.create(
@@ -87,30 +96,18 @@ async def create_feed_post_ai(
     hashtags = ai["hashtags"]
     subject = ai["subject"]
 
-    # Auto-map hashtags to subject/chapter/topic
     chapter = hashtags[1] if len(hashtags) > 1 else None
-    topic   = hashtags[2] if len(hashtags) > 2 else None
+    topic = hashtags[2] if len(hashtags) > 2 else None
 
-    # ---------------------------------------------------------------
-    # 3️⃣ CALL SUPABASE RPC: create_feed_post_v3
-    # ---------------------------------------------------------------
-    { 
-        "user_id": "uuid",
-        "title": "text",
-        "content_text": "text",
-        "media_url": ["text"],
-        "media_type": "text",
-        "subject": "text",
-        "chapter": "text",
-        "topic": "text"
-    }
-
+    # -------------------------------
+    # Call Supabase RPC
+    # -------------------------------
     rpc_payload = {
         "p_user_id": user_id,
         "p_title": title,
         "p_content_text": rewritten,
-        "p_media_url": media_urls if len(media_urls) > 0 else None,
-        "p_media_type": "image" if len(media_urls) > 0 else None,
+        "p_media_url": media_urls if media_urls else None,
+        "p_media_type": "image" if media_urls else None,
         "p_subject": subject,
         "p_chapter": chapter,
         "p_topic": topic,
@@ -118,9 +115,9 @@ async def create_feed_post_ai(
 
     rpc = supabase.rpc("create_feed_post_v3", rpc_payload).execute()
 
-    # ---------------------------------------------------------------
-    # 4️⃣ Return Final AI-Processed Object to Frontend
-    # ---------------------------------------------------------------
+    # -------------------------------
+    # Return Response
+    # -------------------------------
     return {
         "message": "Post created successfully",
         "rewritten_text": rewritten,
@@ -129,3 +126,9 @@ async def create_feed_post_ai(
         "media_urls": media_urls,
         "db_response": rpc.data
     }
+
+
+# -----------------------------------------------------------
+# Register router
+# -----------------------------------------------------------
+app.include_router(router)
