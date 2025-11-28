@@ -410,6 +410,77 @@ Reply concisely (≤80 words), clinically relevant, exam-focused.
 
 
     # ======================================================
+    # 9️⃣ REVIEW COMPLETED FLASHCARDS — CHAT (CORRECT LOGIC)
+    # ======================================================
+    elif action == "chat_review_completed_flashcard":
+        react_order_final = payload.get("react_order_final")
+
+        if not react_order_final:
+            return {"error": "Missing react_order_final for review chat"}
+
+        # Fetch pointer row
+        try:
+            res = (
+                supabase.table("student_flashcard_pointer")
+                .select("pointer_id, conversation_log")
+                .eq("student_id", student_id)
+                .eq("subject_id", subject_id)
+                .eq("react_order_final", react_order_final)
+                .limit(1)
+                .execute()
+            )
+        except:
+            return {"error": "⚠️ Failed to fetch pointer for review chat"}
+
+        if not res.data:
+            return {"error": "⚠️ Pointer not found for this flashcard in review mode"}
+
+        pointer = res.data[0]
+        pointer_id = pointer["pointer_id"]
+        convo_log = pointer.get("conversation_log", [])
+
+        # Add student message
+        convo_log.append({
+            "role": "student",
+            "content": message,
+            "ts": datetime.utcnow().isoformat()
+        })
+
+        # GPT reply
+        prompt = """
+You are a senior NEET-PG mentor with 30 years of experience.
+Reply concisely (≤80 words), clinically relevant, exam-focused.
+"""
+
+        try:
+            mentor_reply = chat_with_gpt(prompt, convo_log)
+        except Exception as e:
+            print("🔥 GPT ERROR:", e)
+            mentor_reply = "⚠️ I'm facing a temporary glitch. Try again."
+
+        # Add assistant reply
+        convo_log.append({
+            "role": "assistant",
+            "content": mentor_reply,
+            "ts": datetime.utcnow().isoformat()
+        })
+
+        # Save back
+        try:
+            supabase.table("student_flashcard_pointer").update({
+                "conversation_log": convo_log,
+                "updated_at": datetime.utcnow().isoformat()
+            }).eq("pointer_id", pointer_id).execute()
+        except:
+            return {"error": "⚠️ Failed to save updated chat"}
+
+        return {
+            "mentor_reply": mentor_reply,
+            "conversation_log": convo_log
+        }
+
+
+    # ======================================================
     # ❌ UNKNOWN ACTION
     # ======================================================
     else:
