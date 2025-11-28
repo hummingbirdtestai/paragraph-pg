@@ -18,7 +18,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 # ───────────────────────────────────────────────
 # JSON-safe UUID conversion
 # ───────────────────────────────────────────────
@@ -30,6 +29,30 @@ def make_json_safe(data):
     if isinstance(data, list):
         return [make_json_safe(v) for v in data]
     return data
+
+
+# ───────────────────────────────────────────────
+# ⭐ NEW: FETCH CHAT FOR BOOKMARKED FLASHCARDS
+# ───────────────────────────────────────────────
+def fetch_bookmark_chat(student_id, subject_id, flashcard_id, updated_time):
+    try:
+        res = (
+            supabase.table("flashcard_review_bookmarks_chat")
+            .select("conversation_log")
+            .eq("student_id", student_id)
+            .eq("subject_id", subject_id)
+            .eq("flashcard_id", flashcard_id)
+            .eq("flashcard_updated_time", updated_time)
+            .order("updated_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if res.data:
+            return res.data[0].get("conversation_log", [])
+    except:
+        pass
+
+    return []
 
 
 # ───────────────────────────────────────────────
@@ -54,20 +77,15 @@ async def flashcard_orchestrate(request: Request):
             {"p_student_id": student_id, "p_subject_id": subject_id},
         )
 
-        # ⭐⭐⭐ ONLY CHANGE IN THE ENTIRE FILE ⭐⭐⭐
         if not rpc_data:
-            print("⚠️ RPC returned None, checking if it's completion…")
-            # Detect Supabase error text
             return {
                 "completed": True,
                 "message": "No more flashcards available"
             }
-        # ⭐⭐⭐ END OF CHANGE ⭐⭐⭐
 
         safe_phase = make_json_safe(rpc_data.get("phase_json"))
         safe_reply = make_json_safe(rpc_data.get("mentor_reply"))
 
-        # UPDATE POINTER
         try:
             call_rpc(
                 "update_flashcard_pointer_status",
@@ -79,8 +97,8 @@ async def flashcard_orchestrate(request: Request):
                     "p_mentor_reply": safe_reply,
                 },
             )
-        except Exception as e:
-            print(f"⚠️ update_flashcard_pointer_status failed: {e}")
+        except:
+            pass
 
         return {
             "student_id": student_id,
@@ -95,6 +113,7 @@ async def flashcard_orchestrate(request: Request):
             "element_id": rpc_data.get("element_id"),
             "is_bookmark": rpc_data.get("is_bookmark"),
         }
+
 
     # ======================================================
     # 2️⃣ CHAT INSIDE FLASHCARD FLOW
@@ -126,11 +145,9 @@ async def flashcard_orchestrate(request: Request):
                     "ts": datetime.utcnow().isoformat(),
                 }
             )
-        except Exception as e:
-            print(f"⚠️ chat fetch failed: {e}")
+        except:
             return {"error": "❌ Chat pointer fetch failed"}
 
-        # GPT RESPONSE
         prompt = """
 You are a senior NEET-PG mentor with 30 years of experience.
 Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
@@ -151,15 +168,15 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
             }
         )
 
-        # UPDATE DB
         try:
             supabase.table("student_flashcard_pointer").update(
                 {"conversation_log": convo_log}
             ).eq("pointer_id", pointer_id).execute()
-        except Exception as e:
-            print(f"⚠️ chat save failed: {e}")
+        except:
+            pass
 
         return {"mentor_reply": mentor_reply, "status": status}
+
 
     # ======================================================
     # 3️⃣ NEXT FLASHCARD IN LEARNING FLOW
@@ -179,7 +196,6 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
         safe_phase = make_json_safe(rpc_data.get("phase_json"))
         safe_reply = make_json_safe(rpc_data.get("mentor_reply"))
 
-        # UPDATE POINTER
         try:
             call_rpc(
                 "update_flashcard_pointer_status",
@@ -191,8 +207,8 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
                     "p_mentor_reply": safe_reply,
                 },
             )
-        except Exception as e:
-            print(f"⚠️ pointer update failed: {e}")
+        except:
+            pass
 
         return {
             "student_id": student_id,
@@ -207,6 +223,7 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
             "element_id": rpc_data.get("element_id"),
             "is_bookmark": rpc_data.get("is_bookmark"),
         }
+
 
     # ======================================================
     # 4️⃣ REVIEW COMPLETED FLASHCARDS — START
@@ -229,6 +246,7 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
             "review_completed": False,
             "no_bookmarks": False
         }
+
 
     # ======================================================
     # 5️⃣ REVIEW COMPLETED FLASHCARDS — NEXT
@@ -256,8 +274,9 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
             "review_completed": False
         }
 
+
     # ======================================================
-    # 6️⃣ BOOKMARK REVIEW — START
+    # 6️⃣ BOOKMARK REVIEW — START  (UPDATED)
     # ======================================================
     elif action == "start_bookmarked_revision":
         rpc_data = call_rpc(
@@ -268,10 +287,21 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
         if not rpc_data:
             return None
 
-        return make_json_safe(rpc_data)
+        item = make_json_safe(rpc_data)
+
+        # ⭐ Inject bookmark chat history
+        item["conversation_log"] = fetch_bookmark_chat(
+            student_id,
+            subject_id,
+            item.get("element_id") or item.get("flashcard_json", {}).get("id"),
+            item.get("updated_time")
+        )
+
+        return item
+
 
     # ======================================================
-    # 7️⃣ BOOKMARK REVIEW — NEXT
+    # 7️⃣ BOOKMARK REVIEW — NEXT  (UPDATED)
     # ======================================================
     elif action == "next_bookmarked_flashcard":
         last_ts = payload.get("last_updated_time")
@@ -285,7 +315,98 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
             },
         )
 
-        return make_json_safe(rpc_data)
+        item = make_json_safe(rpc_data)
+
+        if item:
+            # ⭐ Inject chat history
+            item["conversation_log"] = fetch_bookmark_chat(
+                student_id,
+                subject_id,
+                item.get("element_id") or item.get("flashcard_json", {}).get("id"),
+                item.get("updated_time")
+            )
+
+        return item
+
+
+    # ======================================================
+    # 8️⃣ BOOKMARK REVIEW CHAT (stores conversation in DB)
+    # ======================================================
+    elif action == "chat_review_flashcard_bookmarks":
+        flashcard_id = payload.get("flashcard_id")
+        flashcard_updated_time = payload.get("flashcard_updated_time")
+        message = payload.get("message")
+
+        if not flashcard_id or not flashcard_updated_time:
+            return {"error": "Missing flashcard_id or flashcard_updated_time in bookmark chat"}
+
+        try:
+            res = (
+                supabase.table("flashcard_review_bookmarks_chat")
+                .select("id, conversation_log")
+                .eq("student_id", student_id)
+                .eq("subject_id", subject_id)
+                .eq("flashcard_id", flashcard_id)
+                .eq("flashcard_updated_time", flashcard_updated_time)
+                .order("updated_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+        except:
+            res = None
+
+        if res and res.data:
+            chat_row = res.data[0]
+            chat_id = chat_row["id"]
+            convo_log = chat_row["conversation_log"] or []
+        else:
+            chat_id = None
+            convo_log = []
+
+        convo_log.append({
+            "role": "student",
+            "content": message,
+            "ts": datetime.utcnow().isoformat()
+        })
+
+        prompt = """
+You are a senior NEET-PG mentor with 30 years of experience.
+Reply concisely (≤80 words), clinically relevant, exam-focused.
+"""
+
+        try:
+            mentor_reply = chat_with_gpt(prompt, convo_log)
+        except:
+            mentor_reply = "⚠️ I'm facing a temporary glitch. Try again."
+
+        convo_log.append({
+            "role": "assistant",
+            "content": mentor_reply,
+            "ts": datetime.utcnow().isoformat()
+        })
+
+        try:
+            if chat_id:
+                supabase.table("flashcard_review_bookmarks_chat").update({
+                    "conversation_log": convo_log,
+                    "updated_at": datetime.utcnow().isoformat()
+                }).eq("id", chat_id).execute()
+            else:
+                supabase.table("flashcard_review_bookmarks_chat").insert({
+                    "student_id": student_id,
+                    "subject_id": subject_id,
+                    "flashcard_id": flashcard_id,
+                    "flashcard_updated_time": flashcard_updated_time,
+                    "conversation_log": convo_log
+                }).execute()
+        except:
+            pass
+
+        return {
+            "mentor_reply": mentor_reply,
+            "conversation_log": convo_log
+        }
+
 
     # ======================================================
     # ❌ UNKNOWN ACTION
@@ -299,6 +420,4 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
 # ───────────────────────────────────────────────
 @app.get("/")
 def home():
-    return {
-        "message": "🧠 Flashcard Orchestra API v4.1 running with enriched review flow ✅"
-    }
+    return {"message": "🧠 Flashcard Orchestra API v4.1 running with enriched review flow ✅"}
