@@ -32,7 +32,7 @@ def make_json_safe(data):
 
 
 # ───────────────────────────────────────────────
-# ⭐ NEW: FETCH CHAT FOR BOOKMARKED FLASHCARDS
+# ⭐ FETCH CHAT FOR BOOKMARKED FLASHCARDS
 # ───────────────────────────────────────────────
 def fetch_bookmark_chat(student_id, subject_id, flashcard_id, updated_time):
     try:
@@ -51,7 +51,27 @@ def fetch_bookmark_chat(student_id, subject_id, flashcard_id, updated_time):
             return res.data[0].get("conversation_log", [])
     except:
         pass
+    return []
 
+
+# ───────────────────────────────────────────────
+# ⭐ NEW: FETCH CHAT FOR REVIEW COMPLETED MODE
+# ───────────────────────────────────────────────
+def fetch_review_chat(student_id, subject_id, react_order_final):
+    try:
+        res = (
+            supabase.table("student_flashcard_pointer")
+            .select("conversation_log")
+            .eq("student_id", student_id)
+            .eq("subject_id", subject_id)
+            .eq("react_order_final", react_order_final)
+            .limit(1)
+            .execute()
+        )
+        if res.data:
+            return res.data[0].get("conversation_log", [])
+    except:
+        pass
     return []
 
 
@@ -241,8 +261,15 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
                 "no_bookmarks": True
             }
 
+        item = make_json_safe(rpc_data)
+
+        # ⭐ Inject stored chat history
+        item["conversation_log"] = fetch_review_chat(
+            student_id, subject_id, item.get("react_order_final")
+        )
+
         return {
-            "review_item": make_json_safe(rpc_data),
+            "review_item": item,
             "review_completed": False,
             "no_bookmarks": False
         }
@@ -269,14 +296,21 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
                 "review_completed": True
             }
 
+        item = make_json_safe(rpc_data)
+
+        # ⭐ Add stored chat history
+        item["conversation_log"] = fetch_review_chat(
+            student_id, subject_id, item.get("react_order_final")
+        )
+
         return {
-            "review_item": make_json_safe(rpc_data),
+            "review_item": item,
             "review_completed": False
         }
 
 
     # ======================================================
-    # 6️⃣ BOOKMARK REVIEW — START  (UPDATED)
+    # 6️⃣ BOOKMARK REVIEW — START
     # ======================================================
     elif action == "start_bookmarked_revision":
         rpc_data = call_rpc(
@@ -289,7 +323,6 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
 
         item = make_json_safe(rpc_data)
 
-        # ⭐ Inject bookmark chat history
         item["conversation_log"] = fetch_bookmark_chat(
             student_id,
             subject_id,
@@ -301,7 +334,7 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
 
 
     # ======================================================
-    # 7️⃣ BOOKMARK REVIEW — NEXT  (UPDATED)
+    # 7️⃣ BOOKMARK REVIEW — NEXT
     # ======================================================
     elif action == "next_bookmarked_flashcard":
         last_ts = payload.get("last_updated_time")
@@ -318,7 +351,6 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
         item = make_json_safe(rpc_data)
 
         if item:
-            # ⭐ Inject chat history
             item["conversation_log"] = fetch_bookmark_chat(
                 student_id,
                 subject_id,
@@ -330,7 +362,7 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
 
 
     # ======================================================
-    # 8️⃣ BOOKMARK REVIEW CHAT (stores conversation in DB)
+    # 8️⃣ BOOKMARK REVIEW CHAT
     # ======================================================
     elif action == "chat_review_flashcard_bookmarks":
         flashcard_id = payload.get("flashcard_id")
@@ -338,7 +370,7 @@ Reply concisely (≤80 words), clinically relevant, using Unicode where useful.
         message = payload.get("message")
 
         if not flashcard_id or not flashcard_updated_time:
-            return {"error": "Missing flashcard_id or flashcard_updated_time in bookmark chat"}
+            return {"error": "Missing identifiers for bookmark chat"}
 
         try:
             res = (
@@ -410,15 +442,14 @@ Reply concisely (≤80 words), clinically relevant, exam-focused.
 
 
     # ======================================================
-    # 9️⃣ REVIEW COMPLETED FLASHCARDS — CHAT (CORRECT LOGIC)
+    # 9️⃣ REVIEW COMPLETED FLASHCARDS — CHAT
     # ======================================================
     elif action == "chat_review_completed_flashcard":
         react_order_final = payload.get("react_order_final")
 
         if not react_order_final:
-            return {"error": "Missing react_order_final for review chat"}
+            return {"error": "Missing react_order_final"}
 
-        # Fetch pointer row
         try:
             res = (
                 supabase.table("student_flashcard_pointer")
@@ -430,49 +461,44 @@ Reply concisely (≤80 words), clinically relevant, exam-focused.
                 .execute()
             )
         except:
-            return {"error": "⚠️ Failed to fetch pointer for review chat"}
+            return {"error": "⚠️ Failed to fetch pointer"}
 
         if not res.data:
-            return {"error": "⚠️ Pointer not found for this flashcard in review mode"}
+            return {"error": "⚠️ Pointer not found"}
 
         pointer = res.data[0]
         pointer_id = pointer["pointer_id"]
         convo_log = pointer.get("conversation_log", [])
 
-        # Add student message
         convo_log.append({
             "role": "student",
             "content": message,
             "ts": datetime.utcnow().isoformat()
         })
 
-        # GPT reply
         prompt = """
 You are a senior NEET-PG mentor with 30 years of experience.
-Reply concisely (≤80 words), clinically relevant, exam-focused.
+Reply concisely (≤80 words), clinically relevant.
 """
 
         try:
             mentor_reply = chat_with_gpt(prompt, convo_log)
-        except Exception as e:
-            print("🔥 GPT ERROR:", e)
-            mentor_reply = "⚠️ I'm facing a temporary glitch. Try again."
+        except:
+            mentor_reply = "⚠️ Temporary issue. Try again."
 
-        # Add assistant reply
         convo_log.append({
             "role": "assistant",
             "content": mentor_reply,
             "ts": datetime.utcnow().isoformat()
         })
 
-        # Save back
         try:
             supabase.table("student_flashcard_pointer").update({
                 "conversation_log": convo_log,
                 "updated_at": datetime.utcnow().isoformat()
             }).eq("pointer_id", pointer_id).execute()
         except:
-            return {"error": "⚠️ Failed to save updated chat"}
+            return {"error": "⚠️ Failed to save chat"}
 
         return {
             "mentor_reply": mentor_reply,
@@ -481,7 +507,7 @@ Reply concisely (≤80 words), clinically relevant, exam-focused.
 
 
     # ======================================================
-    # ❌ UNKNOWN ACTION
+    # ❌ UNKNOWN
     # ======================================================
     else:
         return {"error": f"Unknown action '{action}'"}
