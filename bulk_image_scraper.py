@@ -24,7 +24,6 @@ def download_file(url: str) -> bytes:
 
 def upload_to_supabase(file_bytes: bytes, filename: str) -> str:
     path = f"feed_images/{filename}"
-
     res = supabase.storage.from_(BUCKET).upload(
         path,
         file_bytes,
@@ -39,10 +38,20 @@ def upload_to_supabase(file_bytes: bytes, filename: str) -> str:
 
 
 def process_all():
-    print("\n🔍 Fetching records with missing images...")
-    rows = supabase.table("feed_posts").select("*").is_("image_url_supabase", None).execute()
+    print("\n🔍 Fetching rows where:")
+    print("➡ image_url IS NOT NULL")
+    print("➡ image_url_supabase IS NULL")
 
-    if len(rows.data) == 0:
+    rows = (
+        supabase
+        .table("feed_posts")
+        .select("*")
+        .not_("image_url", "is", None)      # → image_url IS NOT NULL
+        .is_("image_url_supabase", None)    # → image_url_supabase IS NULL
+        .execute()
+    )
+
+    if not rows.data:
         print("🎉 Nothing left to process!")
         return
 
@@ -52,10 +61,17 @@ def process_all():
         try:
             print(f"\n➡ Processing ID: {row['id']}")
 
-            # Step 1: Download original
-            img_bytes = download_file(row["image_url"])
+            url = row["image_url"]
 
-            # Step 2: Save with ID name
+            # Skip invalid URL formats
+            if not isinstance(url, str) or not url.startswith("http"):
+                print(f"⛔ Skipping invalid URL: {url}")
+                continue
+
+            # Step 1: Download
+            img_bytes = download_file(url)
+
+            # Step 2: Save filename as ID
             filename = f"{row['id']}.jpg"
 
             # Step 3: Upload to Supabase
@@ -67,6 +83,12 @@ def process_all():
             }).eq("id", row["id"]).execute()
 
             print(f"✅ Uploaded → {public_url}")
+
+        except requests.exceptions.HTTPError as e:
+            if "403" in str(e):
+                print(f"🚫 403 Forbidden — Skipping {url}")
+                continue
+            print(f"❌ HTTP error for {row['id']}: {e}")
 
         except Exception as e:
             print(f"❌ Error processing {row['id']}: {e}")
