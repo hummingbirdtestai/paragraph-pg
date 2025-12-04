@@ -24,6 +24,7 @@ def download_file(url: str) -> bytes:
 
 def upload_to_supabase(file_bytes: bytes, filename: str) -> str:
     path = f"feed_images/{filename}"
+
     res = supabase.storage.from_(BUCKET).upload(
         path,
         file_bytes,
@@ -43,11 +44,10 @@ def process_all():
     print("➡ image_url_supabase IS NULL")
 
     rows = (
-        supabase
-        .table("feed_posts")
+        supabase.table("feed_posts")
         .select("*")
-        .not_("image_url", "is", None)      # → image_url IS NOT NULL
-        .is_("image_url_supabase", None)    # → image_url_supabase IS NULL
+        .neq("image_url", None)              # image_url IS NOT NULL
+        .is_("image_url_supabase", None)     # image_url_supabase IS NULL
         .execute()
     )
 
@@ -63,15 +63,15 @@ def process_all():
 
             url = row["image_url"]
 
-            # Skip invalid URL formats
-            if not isinstance(url, str) or not url.startswith("http"):
+            # Skip invalid URLs
+            if not url or not isinstance(url, str) or not url.startswith("http"):
                 print(f"⛔ Skipping invalid URL: {url}")
                 continue
 
-            # Step 1: Download
+            # Step 1: Download original
             img_bytes = download_file(url)
 
-            # Step 2: Save filename as ID
+            # Step 2: Save with ID name
             filename = f"{row['id']}.jpg"
 
             # Step 3: Upload to Supabase
@@ -85,11 +85,7 @@ def process_all():
             print(f"✅ Uploaded → {public_url}")
 
         except requests.exceptions.HTTPError as e:
-            if "403" in str(e):
-                print(f"🚫 403 Forbidden — Skipping {url}")
-                continue
             print(f"❌ HTTP error for {row['id']}: {e}")
-
         except Exception as e:
             print(f"❌ Error processing {row['id']}: {e}")
 
