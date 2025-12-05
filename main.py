@@ -31,9 +31,7 @@ async def orchestrate(request: Request):
 
     print(f"🎬 Action = {action}, Student = {student_id}, Subject = {subject_id}")
 
-    # ───────────────────────────────────────────
-    # 1️⃣ START NORMAL FLOW (active learning)
-    # ───────────────────────────────────────────
+    # 1️⃣ START NORMAL FLOW
     if action == "start":
         rpc_data = call_rpc("start_orchestra", {
             "p_student_id": student_id,
@@ -45,9 +43,7 @@ async def orchestrate(request: Request):
 
         return rpc_data
 
-    # ───────────────────────────────────────────
     # 2️⃣ ACTIVE LEARNING CHAT
-    # ───────────────────────────────────────────
     elif action == "chat":
         try:
             row = (
@@ -67,14 +63,12 @@ async def orchestrate(request: Request):
             pointer_id = pointer["pointer_id"]
             convo = pointer.get("conversation_log", [])
 
-            # Append student message
             convo.append({
                 "role": "student",
                 "content": message,
                 "ts": datetime.utcnow().isoformat() + "Z",
             })
 
-            # GPT reply
             prompt = """
 You are a senior NEET-PG mentor with 30 years’ experience.
 Guide the student concisely in Markdown.
@@ -97,9 +91,7 @@ Guide the student concisely in Markdown.
         except Exception as e:
             return {"error": str(e)}
 
-    # ───────────────────────────────────────────
     # 3️⃣ NEXT PHASE
-    # ───────────────────────────────────────────
     elif action == "next":
         rpc_data = call_rpc("next_orchestra", {
             "p_student_id": student_id,
@@ -107,9 +99,7 @@ Guide the student concisely in Markdown.
         })
         return rpc_data
 
-    # ───────────────────────────────────────────
     # 4️⃣ BOOKMARK REVIEW
-    # ───────────────────────────────────────────
     elif action == "bookmark_review":
         row = call_rpc("get_first_bookmarked_phase", {
             "p_student_id": student_id,
@@ -126,9 +116,7 @@ Guide the student concisely in Markdown.
         })
         return {"bookmarked_concepts": [row] if row else []}
 
-    # ───────────────────────────────────────────
     # 5️⃣ REVIEW COMPLETED — START
-    # ───────────────────────────────────────────
     elif action == "review_upto_start":
         rows = (
             supabase.table("student_phase_pointer")
@@ -150,9 +138,7 @@ Guide the student concisely in Markdown.
 
         return {"review_upto": [rows[0]]}
 
-    # ───────────────────────────────────────────
     # 6️⃣ REVIEW COMPLETED — NEXT
-    # ───────────────────────────────────────────
     elif action == "review_upto_next":
         current_order = payload.get("react_order_final")
 
@@ -181,9 +167,7 @@ Guide the student concisely in Markdown.
 
         return {"review_upto": [next_row] if next_row else []}
 
-    # ───────────────────────────────────────────
-    # 7️⃣ WRONG MCQs START (⭐ FIXED WITH seq_num + total_count)
-    # ───────────────────────────────────────────
+    # 7️⃣ WRONG MCQs START
     elif action == "wrong_mcqs_start":
         rows = (
             supabase.table("student_phase_pointer")
@@ -200,16 +184,13 @@ Guide the student concisely in Markdown.
             return {"wrong_mcqs": []}
 
         total = len(rows)
-
         for i, r in enumerate(rows):
             r["seq_num"] = i + 1
             r["total_count"] = total
 
         return {"wrong_mcqs": [rows[0]]}
 
-    # ───────────────────────────────────────────
-    # 8️⃣ WRONG MCQs NEXT (⭐ FIXED WITH seq_num + total_count)
-    # ───────────────────────────────────────────
+    # 8️⃣ WRONG MCQs NEXT
     elif action == "wrong_mcqs_next":
         current_order = payload.get("react_order_final")
 
@@ -228,7 +209,6 @@ Guide the student concisely in Markdown.
             return {"wrong_mcqs": []}
 
         total = len(rows)
-
         for i, r in enumerate(rows):
             r["seq_num"] = i + 1
             r["total_count"] = total
@@ -240,9 +220,7 @@ Guide the student concisely in Markdown.
 
         return {"wrong_mcqs": [next_row] if next_row else []}
 
-    # ───────────────────────────────────────────
-    # 9️⃣ REVIEW CHAT (Unified)
-    # ───────────────────────────────────────────
+    # 9️⃣ REVIEW CHAT
     elif action == "review_chat":
         react_order_final = payload.get("react_order_final")
 
@@ -291,9 +269,7 @@ Guide the student concisely in Markdown.
 
         return {"mentor_reply": mentor_reply}
 
-    # ───────────────────────────────────────────
     # ❿ UNKNOWN ACTION
-    # ───────────────────────────────────────────
     else:
         return {"error": f"Unknown action '{action}'"}
 
@@ -313,8 +289,8 @@ async def submit_answer(request: Request):
             "student_answer": data["student_answer"],
             "correct_answer": data["correct_answer"],
             "is_correct": data["is_correct"],
-            "is_completed": True,
             "submitted_at": datetime.utcnow().isoformat() + "Z",
+            "is_completed": True,
         }
 
         supabase.table("student_mcq_submissions") \
@@ -327,9 +303,79 @@ async def submit_answer(request: Request):
         return {"error": str(e)}
 
 
+
+# ───────────────────────────────────────────────
+# NEW ENDPOINT: Resolve MCQ → Find Previous Concept → Call RPC
+# ───────────────────────────────────────────────
+@app.post("/intent/resolve_mcq")
+async def resolve_mcq(request: Request):
+    data = await request.json()
+
+    p_student_id = data.get("p_student_id")
+    p_mcq_id = data.get("p_mcq_id")
+    p_student_answer = data.get("p_student_answer")
+    p_correct_answer = data.get("p_correct_answer")
+
+    if not p_student_id or not p_mcq_id:
+        return {"error": "p_student_id and p_mcq_id are required"}
+
+    # 1️⃣ Fetch the MCQ row
+    mcq_row = (
+        supabase.table("concept_phase_final")
+        .select("id, phase_type, subject_id, react_order_final")
+        .eq("id", p_mcq_id)
+        .eq("phase_type", "mcq")
+        .execute()
+    )
+
+    if not mcq_row.data:
+        return {"error": "MCQ row not found"}
+
+    mcq = mcq_row.data[0]
+    mcq_order = mcq["react_order_final"]
+    subject_id = mcq["subject_id"]
+
+    # 2️⃣ Fetch the concept just before this MCQ
+    concept_row = (
+        supabase.table("concept_phase_final")
+        .select("id, react_order_final, phase_json")
+        .eq("subject_id", subject_id)
+        .eq("phase_type", "concept")
+        .eq("react_order_final", mcq_order - 1)
+        .limit(1)
+        .execute()
+    )
+
+    if not concept_row.data:
+        return {"error": "Previous concept not found"}
+
+    concept = concept_row.data[0]
+    concept_id = concept["id"]
+
+    # 3️⃣ Call the existing RPC
+    rpc_result = call_rpc("mark_mcq_submission_v6", {
+        "p_student_id": p_student_id,
+        "p_concept_id": concept_id,
+        "p_mcq_id": p_mcq_id,
+        "p_student_answer": p_student_answer,
+        "p_correct_answer": p_correct_answer,
+    })
+
+    # 4️⃣ Return combined response
+    return {
+        "concept_before": {
+            "concept_id": concept_id,
+            "react_order_final": concept["react_order_final"],
+            "phase_json": concept["phase_json"],
+        },
+        "rpc_result": rpc_result
+    }
+
+
+
 # ───────────────────────────────────────────────
 # HEALTH CHECK
 # ───────────────────────────────────────────────
 @app.get("/")
 def home():
-    return {"message": "🧠 Review flow now includes seq_num & total_count ✅"}
+    return {"message": "🧠 Review flow now includes seq_num & total_count + Resolve MCQ Intent Added ✅"}
