@@ -6,8 +6,8 @@ router = APIRouter()
 @router.post("/notify")
 async def notify(request: Request):
     """
-    This endpoint is automatically called by Supabase trigger.
-    It forwards notification to realtime channel.
+    Called automatically by Supabase trigger.
+    Forwards notification to Supabase Realtime channel.
     """
     payload = await request.json()
     record = payload.get("record", {})
@@ -16,20 +16,27 @@ async def notify(request: Request):
     message = record.get("message")
     gif_url = record.get("gif_url")
     category = record.get("category")
+    notification_id = record.get("id")
+    created_at = record.get("created_at")
 
+    # Validate minimal required data
     if not student_id or not message:
-        return {"status": "ignored", "reason": "missing data"}
+        return {"status": "ignored", "reason": "missing student_id/message"}
 
-    # 🔥 Broadcast to realtime (via REST)
+    # 🔥 Build payload EXACTLY as required by Supabase Realtime V2
+    realtime_payload = {
+        "student_id": student_id,
+        "message": message,
+        "gif_url": gif_url,
+        "category": category,
+        "id": notification_id,
+        "created_at": created_at
+    }
+
+    # 🔥 Send broadcast event via REST (correct Realtime V2 format)
     send_realtime_event(
         "student_notifications",
-        {
-            "event": "new_notification",
-            "student_id": student_id,
-            "message": message,
-            "gif_url": gif_url,
-            "category": category,
-        }
+        realtime_payload
     )
 
     return {"status": "ok", "forwarded": True}
