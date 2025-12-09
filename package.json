@@ -1,0 +1,14 @@
+{
+  "name": "notifications-worker",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.3",
+    "pg": "^8.11.5",
+    "dotenv": "^16.4.5"
+  }
+}
