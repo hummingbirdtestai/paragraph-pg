@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Request
-from supabase_client import supabase
+from supabase_client import send_realtime_event
 
 router = APIRouter()
 
@@ -20,8 +20,8 @@ async def notify(request: Request):
     if not student_id or not message:
         return {"status": "ignored", "reason": "missing data"}
 
-    # 🔥 Broadcast to realtime
-    supabase.realtime.send(
+    # 🔥 Broadcast to realtime (via REST)
+    send_realtime_event(
         "student_notifications",
         {
             "event": "new_notification",
