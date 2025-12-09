@@ -4,6 +4,7 @@ from datetime import datetime
 from supabase_client import call_rpc, supabase
 from gpt_utils import chat_with_gpt
 import json
+from notify import router as notify_router
 
 # ───────────────────────────────────────────────
 # Initialize FastAPI app
@@ -17,6 +18,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(notify_router)
 
 # ───────────────────────────────────────────────
 # MASTER ORCHESTRATOR ENDPOINT
@@ -372,10 +375,10 @@ async def resolve_mcq(request: Request):
     }
 
 
-
 # ───────────────────────────────────────────────
 # HEALTH CHECK
 # ───────────────────────────────────────────────
 @app.get("/")
 def home():
     return {"message": "🧠 Review flow now includes seq_num & total_count + Resolve MCQ Intent Added ✅"}
+
