@@ -43,13 +43,16 @@ def call_rpc(function_name: str, params: dict = None):
 def send_realtime_event(channel: str, payload: dict):
     """
     Sends a broadcast event to Supabase Realtime (v2) using REST API.
+    Requires SERVICE ROLE KEY.
     """
-    url = f"{SUPABASE_URL}/realtime/v1/broadcast"
+
+    # ✅ Correct Realtime Broadcast Endpoint (v2)
+    url = f"{SUPABASE_URL}/realtime/v1/api/broadcast/message"
 
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {SUPABASE_KEY}",
-        "apiKey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",  # MUST be service role key
+        "apiKey": SUPABASE_KEY
     }
 
     body = {
@@ -63,6 +66,7 @@ def send_realtime_event(channel: str, payload: dict):
         resp = requests.post(url, headers=headers, data=json.dumps(body))
         print("Realtime broadcast response:", resp.status_code, resp.text)
         return resp.ok
+
     except Exception as e:
         print("Realtime broadcast failed:", e)
         return False
