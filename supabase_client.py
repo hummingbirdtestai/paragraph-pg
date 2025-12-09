@@ -2,6 +2,8 @@
 from supabase import create_client
 import os
 from dotenv import load_dotenv
+import requests
+import json
 
 # 🔹 Load environment variables
 load_dotenv()
@@ -47,3 +49,29 @@ def call_rpc(function_name: str, params: dict = None):
     except Exception as e:
         print(f"⚠️ RPC Exception in {function_name}: {e}")
         return None
+
+def send_realtime_event(channel: str, payload: dict):
+    """
+    Sends a broadcast event to Supabase Realtime (v2) using REST API.
+    Works for FastAPI backend because supabase-py has no realtime send().
+    """
+    url = f"{SUPABASE_URL}/realtime/v1/api/broadcast"
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {SUPABASE_KEY}",     # service role recommended
+        "apiKey": SUPABASE_KEY
+    }
+
+    data = {
+        "channel": channel,
+        "payload": payload
+    }
+
+    try:
+        resp = requests.post(url, headers=headers, data=json.dumps(data))
+        print("Realtime broadcast response:", resp.status_code, resp.text)
+        return resp.ok
+    except Exception as e:
+        print("Realtime broadcast failed:", e)
+        return False
