@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 from supabase_client import call_rpc, supabase
 from gpt_utils import chat_with_gpt
+from newchat import router as newchat_router
 import json
 from notify import router as notify_router
 
@@ -20,6 +21,8 @@ app.add_middleware(
 )
 
 app.include_router(notify_router)
+
+app.include_router(newchat_router, prefix="/ask-paragraph")
 
 # ───────────────────────────────────────────────
 # MASTER ORCHESTRATOR ENDPOINT
@@ -381,4 +384,5 @@ async def resolve_mcq(request: Request):
 @app.get("/")
 def home():
     return {"message": "🧠 Review flow now includes seq_num & total_count + Resolve MCQ Intent Added ✅"}
+
 
