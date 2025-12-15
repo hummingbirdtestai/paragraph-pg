@@ -1,5 +1,4 @@
-from fastapi import APIRouter, Request
-from datetime import datetime
+from fastapi import APIRouter, Request, HTTPException
 from supabase_client import supabase
 from gpt_utils import chat_with_gpt
 
@@ -120,7 +119,7 @@ FORMAT CONSTRAINTS (MANDATORY)
 """
 
 # ───────────────────────────────────────────────
-# START / RESUME ASK PARAGRAPH SESSION
+# START / RESUME MCQ SESSION
 # ───────────────────────────────────────────────
 @router.post("/start")
 async def start_session(request: Request):
@@ -128,122 +127,86 @@ async def start_session(request: Request):
 
     student_id = data["student_id"]
     mcq_id = data["mcq_id"]
-    subject = data["subject_name"]
-    react_order = data["react_order"]
-    phase_json = data["phase_json"]
+    mcq_payload = data["mcq_payload"]
 
-    # 1️⃣ Check existing session
-    row = (
-        supabase.table("student_mcq_session")
-        .select("*")
-        .eq("student_id", student_id)
-        .eq("mcq_id", mcq_id)
-        .eq("subject", subject)
-        .limit(1)
-        .execute()
-    )
-
-    if row.data:
-        session = row.data[0]
-        return {
-            "session_id": session["id"],
-            "dialogs": session["dialogs"],
-            "phase_json": phase_json,
-        }
-
-    # 2️⃣ Ask GPT for first mentor message
+    # 1️⃣ Ask GPT for FIRST mentor question
     mentor_reply = chat_with_gpt(
         SYSTEM_PROMPT,
-        [{
-            "role": "user",
-            "content": "Start discussion for this MCQ.",
-        }],
-        extra_context={"mcq": phase_json}
+        [
+            {
+                "role": "user",
+                "content": "Begin the discussion."
+            }
+        ]
     )
 
-    dialogs = [{
-        "role": "assistant",
-        "content": mentor_reply,
-        "ts": datetime.utcnow().isoformat() + "Z"
-    }]
+    # 2️⃣ Persist via RPC (system + assistant)
+    rpc = supabase.rpc(
+        "upsert_mcq_session_v11",
+        {
+            "p_student_id": student_id,
+            "p_mcq_id": mcq_id,
+            "p_mcq_payload": mcq_payload,
+            "p_new_dialogs": [
+                {
+                    "role": "assistant",
+                    "content": mentor_reply
+                }
+            ]
+        }
+    ).execute()
 
-    # 3️⃣ Insert session
-    inserted = (
-        supabase.table("student_mcq_session")
-        .insert({
-            "student_id": student_id,
-            "mcq_id": mcq_id,
-            "subject": subject,
-            "react_order": react_order,
-            "status": "in_progress",
-            "tutor_state": {},
-            "dialogs": dialogs,
-        })
-        .execute()
-    )
+    if not rpc.data:
+        raise HTTPException(status_code=500, detail="Failed to start MCQ session")
 
-    session_id = inserted.data[0]["id"]
-
-    return {
-        "session_id": session_id,
-        "dialogs": dialogs,
-        "phase_json": phase_json,
-    }
-
+    return rpc.data[0]
 
 # ───────────────────────────────────────────────
-# CONTINUE CHAT
+# CONTINUE CHAT (STUDENT → MENTOR)
 # ───────────────────────────────────────────────
 @router.post("/chat")
 async def continue_chat(request: Request):
     data = await request.json()
 
-    session_id = data["session_id"]
+    student_id = data["student_id"]
+    mcq_id = data["mcq_id"]
     student_message = data["message"]
 
-    # 1️⃣ Fetch session
-    row = (
-        supabase.table("student_mcq_session")
-        .select("dialogs")
-        .eq("id", session_id)
-        .limit(1)
-        .execute()
-    )
-
-    if not row.data:
-        return {"error": "Session not found"}
-
-    dialogs = row.data[0]["dialogs"]
-
-    # 2️⃣ Append student message
-    dialogs.append({
-        "role": "student",
-        "content": student_message,
-        "ts": datetime.utcnow().isoformat() + "Z",
-    })
-
-    # 3️⃣ Ask GPT (ONLY last student turn)
+    # 1️⃣ Ask GPT using ONLY student reply
     mentor_reply = chat_with_gpt(
         SYSTEM_PROMPT,
-        [{
-            "role": "user",
-            "content": student_message,
-        }]
+        [
+            {
+                "role": "user",
+                "content": student_message
+            }
+        ]
     )
 
-    dialogs.append({
-        "role": "assistant",
-        "content": mentor_reply,
-        "ts": datetime.utcnow().isoformat() + "Z",
-    })
+    # 2️⃣ Append student + assistant via RPC
+    rpc = supabase.rpc(
+        "upsert_mcq_session_v11",
+        {
+            "p_student_id": student_id,
+            "p_mcq_id": mcq_id,
+            "p_mcq_payload": None,
+            "p_new_dialogs": [
+                {
+                    "role": "student",
+                    "content": student_message
+                },
+                {
+                    "role": "assistant",
+                    "content": mentor_reply
+                }
+            ]
+        }
+    ).execute()
 
-    # 4️⃣ Persist
-    supabase.table("student_mcq_session") \
-        .update({
-            "dialogs": dialogs,
-            "updated_at": datetime.utcnow().isoformat() + "Z",
-        }) \
-        .eq("id", session_id) \
-        .execute()
+    if not rpc.data:
+        raise HTTPException(status_code=500, detail="Failed to continue MCQ session")
 
-    return {"mentor_reply": mentor_reply}
+    return {
+        "mentor_reply": mentor_reply,
+        "session": rpc.data[0]
+    }
