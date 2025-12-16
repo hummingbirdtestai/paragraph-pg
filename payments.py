@@ -153,13 +153,13 @@ async def initiate_payment(request: Request):
             detail="Payment gateway unavailable"
         )
 
-    payment_session_id = cf_order.get("payment_session_id")
-    
+    ppayment_session_id = cf_order.get("payment_session_id")
+
     if not payment_session_id:
-    raise HTTPException(
-        status_code=500,
-        detail="Failed to generate payment session"
-    )
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate payment session"
+        )
 
     # 6️⃣ Persist order (idempotent safe)
     supabase.table("payment_orders").insert({
