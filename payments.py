@@ -292,3 +292,36 @@ async def cashfree_webhook(request: Request):
         return {"status": "payment_failed"}
 
     return {"status": "ignored"}
+
+@router.post("/preview")
+async def preview_payment(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    plan = body.get("plan")
+    coupon_code = body.get("coupon_code")
+
+    if plan not in PRICING_MAP:
+        raise HTTPException(status_code=400, detail="Invalid plan")
+
+    base_amount = PRICING_MAP[plan]
+
+    try:
+        final_amount, coupon = apply_coupon(base_amount, coupon_code)
+    except HTTPException as e:
+        # Invalid coupon
+        raise e
+
+    discount_percent = coupon["discount_percent"] if coupon else 0
+    discount_amount = base_amount - final_amount
+
+    return {
+        "base_amount": base_amount,
+        "final_amount": final_amount,
+        "discount_percent": discount_percent,
+        "discount_amount": discount_amount,
+        "coupon_code": coupon_code,
+        "valid": True,
+    }
