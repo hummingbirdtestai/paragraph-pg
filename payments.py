@@ -176,7 +176,7 @@ async def initiate_payment(request: Request):
     return {
         "order_id": order_id,
         "amount": final_amount,
-        "checkout_url": payment_link,
+        "payment_session_id": payment_session_id,
         "currency": "INR",
         "status": "initiated"
     }
