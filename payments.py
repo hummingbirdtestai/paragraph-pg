@@ -94,6 +94,9 @@ def create_cashfree_order(order_id: str, amount: int, user: dict):
             "customer_phone": user["phone"],
             "customer_name": user["name"],
             "customer_email": user["email"],
+        },
+        "order_meta": {
+            "return_url": f"https://paragraph.app/payment-success?order_id={order_id}"
         }
     }
 
