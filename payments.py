@@ -113,7 +113,6 @@ def create_cashfree_order(order_id: str, amount: int, user: dict):
 
     return res.json()
 
-
 def verify_webhook_signature(raw_body: bytes, signature: str):
     computed = hmac.new(
         CASHFREE_SECRET_KEY.encode(),
@@ -220,13 +219,13 @@ async def cashfree_webhook(request: Request):
     payload = await request.json()
 
     signature = request.headers.get("x-webhook-signature")
+
     if not signature or not verify_webhook_signature(raw_body, signature):
-        logger.warning("[WEBHOOK] Invalid signature")
+        logger.error("[WEBHOOK] Invalid signature")
         raise HTTPException(status_code=401, detail="Invalid signature")
 
     event = payload.get("type")
-    data = payload.get("data", {})
-    order = data.get("order", {})
+    order = payload.get("data", {}).get("order", {})
 
     order_id = order.get("order_id")
     amount = order.get("order_amount")
@@ -243,18 +242,10 @@ async def cashfree_webhook(request: Request):
     )
 
     if not order_row:
-        logger.error(f"[WEBHOOK] Order not found: {order_id}")
         return {"status": "order_not_found"}
 
     if order_row["status"] == "paid":
         return {"status": "already_processed"}
-
-    if amount != order_row["amount"]:
-        logger.error(
-            f"[WEBHOOK] Amount mismatch for {order_id}: "
-            f"Cashfree={amount} DB={order_row['amount']}"
-        )
-        raise HTTPException(status_code=400, detail="Amount mismatch")
 
     if event == "PAYMENT_SUCCESS":
         student_id = order_row["student_id"]
@@ -280,7 +271,6 @@ async def cashfree_webhook(request: Request):
             "subscribed_coupon_code": order_row["coupon_code"],
         }).eq("id", student_id).execute()
 
-        logger.info(f"[WEBHOOK] Subscription activated for user={student_id}")
         return {"status": "subscription_activated"}
 
     if event == "PAYMENT_FAILED":
@@ -288,7 +278,6 @@ async def cashfree_webhook(request: Request):
             "status": "failed"
         }).eq("order_id", order_id).execute()
 
-        logger.warning(f"[WEBHOOK] Payment failed for {order_id}")
         return {"status": "payment_failed"}
 
     return {"status": "ignored"}
