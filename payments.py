@@ -153,7 +153,7 @@ async def initiate_payment(request: Request):
             detail="Payment gateway unavailable"
         )
 
-    ppayment_session_id = cf_order.get("payment_session_id")
+    payment_session_id = cf_order.get("payment_session_id")
 
     if not payment_session_id:
         raise HTTPException(
