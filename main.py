@@ -15,16 +15,19 @@ app = FastAPI(title="Paragraph Orchestra API", version="3.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://www.neetpg.app",
+        "https://neetpg.app",
+        "http://localhost:3000"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# THEN routers
 app.include_router(notify_router)
-
 app.include_router(newchat_router, prefix="/ask-paragraph")
-
 app.include_router(payments_router)
 
 # ───────────────────────────────────────────────
@@ -387,6 +390,7 @@ async def resolve_mcq(request: Request):
 @app.get("/")
 def home():
     return {"message": "🧠 Review flow now includes seq_num & total_count + Resolve MCQ Intent Added ✅"}
+
 
 
 
