@@ -112,27 +112,47 @@ def verify_webhook_signature(raw_body: bytes, signature: str):
 
 @router.post("/initiate")
 async def initiate_payment(request: Request):
-    body = await request.json()
+    # 1️⃣ Safe JSON parse
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
 
     plan = body.get("plan")
     coupon_code = body.get("coupon_code")
     student_id = body.get("student_id")
 
+    # 2️⃣ Validation
     if plan not in PRICING_MAP:
         raise HTTPException(status_code=400, detail="Invalid plan")
 
     if not student_id:
         raise HTTPException(status_code=400, detail="student_id required")
 
+    # 3️⃣ Pricing (backend is source of truth)
     base_amount = PRICING_MAP[plan]
     final_amount, coupon = apply_coupon(base_amount, coupon_code)
 
-    order_id = f"order_{uuid4().hex[:12]}"
+    # 4️⃣ Generate order id
+    order_id = f"order_{uuid4().hex[:14]}"
 
-    # 1️⃣ Create Cashfree order
-    cf_order = create_cashfree_order(order_id, final_amount)
+    # 5️⃣ Create Cashfree order
+    try:
+        cf_order = create_cashfree_order(order_id, final_amount)
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail="Payment gateway unavailable"
+        )
 
-    # 2️⃣ Persist order
+    payment_link = cf_order.get("payment_link")
+    if not payment_link:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate payment link"
+        )
+
+    # 6️⃣ Persist order (idempotent safe)
     supabase.table("payment_orders").insert({
         "order_id": order_id,
         "student_id": student_id,
@@ -143,10 +163,12 @@ async def initiate_payment(request: Request):
         "created_at": datetime.utcnow().isoformat()
     }).execute()
 
+    # 7️⃣ Response (frontend redirect)
     return {
         "order_id": order_id,
         "amount": final_amount,
-        "checkout_url": cf_order["payment_link"],
+        "checkout_url": payment_link,
+        "currency": "INR",
         "status": "initiated"
     }
 
