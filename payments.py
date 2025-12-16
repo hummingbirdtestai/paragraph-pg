@@ -116,15 +116,17 @@ def create_cashfree_order(order_id: str, amount: int, user: dict):
 
     return res.json()
 
-def verify_webhook_signature(raw_body: bytes, signature: str):
+def verify_webhook_signature(raw_body: bytes, timestamp: str, signature: str):
+    message = f"{timestamp}.{raw_body.decode()}".encode()
+
     computed = hmac.new(
         CASHFREE_SECRET_KEY.encode(),
-        raw_body,
+        message,
         hashlib.sha256
     ).hexdigest()
 
     return hmac.compare_digest(computed, signature)
-
+    
 # ───────────────────────────────────────────────
 # INITIATE PAYMENT
 # ───────────────────────────────────────────────
@@ -218,14 +220,32 @@ async def webhook_options():
 async def cashfree_webhook(request: Request):
     ensure_cashfree_config()
 
+    logger.info("🔥 CASHFREE WEBHOOK HIT")
+
+    logger.info(f"Headers: {dict(request.headers)}")
+
     raw_body = await request.body()
-    payload = await request.json()
+    logger.info(f"Raw body: {raw_body.decode(errors='ignore')}")
+    
+    import json
+    payload = json.loads(raw_body)
 
-    signature = request.headers.get("x-webhook-signature")
+    signature = request.headers.get("x-cf-signature")
+    timestamp = request.headers.get("x-cf-timestamp")
 
-    if not signature or not verify_webhook_signature(raw_body, signature):
-        logger.error("[WEBHOOK] Invalid signature")
-        raise HTTPException(status_code=401, detail="Invalid signature")
+    if not signature:
+        logger.error("❌ WEBHOOK FAILED: Missing x-cf-signature header")
+        return {"status": "missing_signature"}
+    
+    if not timestamp:
+        logger.error("❌ WEBHOOK FAILED: Missing x-cf-timestamp")
+        return {"status": "missing_timestamp"}
+    
+    if not verify_webhook_signature(raw_body, timestamp, signature):
+        logger.error("❌ WEBHOOK FAILED: Signature mismatch")
+        logger.error(f"Signature: {signature}")
+        logger.error(f"Timestamp: {timestamp}")
+        return {"status": "signature_mismatch"}
 
     event = payload.get("type")
     order = payload.get("data", {}).get("order", {})
