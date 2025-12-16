@@ -18,16 +18,20 @@ CASHFREE_BASE_URL = "https://api.cashfree.com/pg"
 CASHFREE_APP_ID = os.getenv("CASHFREE_APP_ID")
 CASHFREE_SECRET_KEY = os.getenv("CASHFREE_SECRET_KEY")
 
-if not CASHFREE_APP_ID or not CASHFREE_SECRET_KEY:
-    raise RuntimeError("Cashfree env vars not set")
+def cashfree_headers():
+    return {
+        "x-client-id": CASHFREE_APP_ID,
+        "x-client-secret": CASHFREE_SECRET_KEY,
+        "Content-Type": "application/json",
+        "x-api-version": "2023-08-01"
+    }
 
-HEADERS = {
-    "x-client-id": CASHFREE_APP_ID,
-    "x-client-secret": CASHFREE_SECRET_KEY,
-    "Content-Type": "application/json",
-    "x-api-version": "2023-08-01"
-}
-
+def ensure_cashfree_config():
+    if not CASHFREE_APP_ID or not CASHFREE_SECRET_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="Payments temporarily unavailable"
+        )
 # ───────────────────────────────────────────────
 # PRICING
 # ───────────────────────────────────────────────
@@ -87,7 +91,7 @@ def create_cashfree_order(order_id: str, amount: int):
     res = requests.post(
         f"{CASHFREE_BASE_URL}/orders",
         json=payload,
-        headers=HEADERS,
+        headers=cashfree_headers(),
         timeout=15
     )
 
@@ -112,6 +116,7 @@ def verify_webhook_signature(raw_body: bytes, signature: str):
 
 @router.post("/initiate")
 async def initiate_payment(request: Request):
+    ensure_cashfree_config()
     # 1️⃣ Safe JSON parse
     try:
         body = await request.json()
@@ -178,6 +183,7 @@ async def initiate_payment(request: Request):
 
 @router.post("/webhook")
 async def cashfree_webhook(request: Request):
+    ensure_cashfree_config()
     raw_body = await request.body()
     payload = await request.json()
 
