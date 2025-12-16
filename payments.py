@@ -96,7 +96,7 @@ def create_cashfree_order(order_id: str, amount: int, user: dict):
             "customer_email": user["email"],
         },
         "order_meta": {
-            "return_url": f"https://paragraph.app/payment-success?order_id={order_id}"
+            "return_url": f"https://www.neetpg.app/payment-success?order_id={order_id}"
         }
     }
 
