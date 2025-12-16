@@ -51,24 +51,23 @@ PLAN_MONTHS = {
 # ───────────────────────────────────────────────
 # UTILS
 # ───────────────────────────────────────────────
-
 def apply_coupon(amount: int, coupon_code: str | None):
     if not coupon_code:
         return amount, None
 
-    coupon = (
+    res = (
         supabase.table("coupons")
         .select("*")
         .eq("code", coupon_code)
         .eq("is_active", True)
         .eq("is_redeemed", False)
-        .single()
         .execute()
-        .data
     )
 
-    if not coupon:
+    if not res.data:
         raise HTTPException(status_code=400, detail="Invalid or expired coupon")
+
+    coupon = res.data[0]
 
     discount_percent = coupon["discount_percent"]
     discount = int(amount * discount_percent / 100)
