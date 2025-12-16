@@ -116,14 +116,21 @@ def create_cashfree_order(order_id: str, amount: int, user: dict):
 
     return res.json()
 
-def verify_webhook_signature(raw_body: bytes, signature: str):
-    computed = hmac.new(
-        CASHFREE_SECRET_KEY.encode(),
-        raw_body,
-        hashlib.sha256
-    ).hexdigest()
+import base64
 
-    return hmac.compare_digest(computed, signature)
+def verify_webhook_signature(raw_body: bytes, timestamp: str, signature: str):
+    message = f"{timestamp}.{raw_body.decode()}".encode()
+
+    digest = hmac.new(
+        CASHFREE_SECRET_KEY.encode(),
+        message,
+        hashlib.sha256
+    ).digest()
+
+    computed_signature = base64.b64encode(digest).decode()
+
+    return hmac.compare_digest(computed_signature, signature)
+
     
 # ───────────────────────────────────────────────
 # INITIATE PAYMENT
@@ -227,15 +234,21 @@ async def cashfree_webhook(request: Request):
     import json
     payload = json.loads(raw_body)
 
-    signature = request.headers.get("x-cf-signature")
-
+    signature = request.headers.get("x-webhook-signature")
+    timestamp = request.headers.get("x-webhook-timestamp")
+    
     if not signature:
-        logger.error("❌ WEBHOOK FAILED: Missing x-cf-signature header")
+        logger.error("❌ Missing x-webhook-signature")
         return {"status": "missing_signature"}
-
-    if not verify_webhook_signature(raw_body, signature):
-        logger.error("❌ WEBHOOK FAILED: Signature mismatch")
+    
+    if not timestamp:
+        logger.error("❌ Missing x-webhook-timestamp")
+        return {"status": "missing_timestamp"}
+    
+    if not verify_webhook_signature(raw_body, timestamp, signature):
+        logger.error("❌ Signature mismatch")
         return {"status": "signature_mismatch"}
+
 
     event = payload.get("type")
     order = payload.get("data", {}).get("order", {})
@@ -260,7 +273,7 @@ async def cashfree_webhook(request: Request):
     if order_row["status"] == "paid":
         return {"status": "already_processed"}
 
-    if event == "PAYMENT_SUCCESS":
+    if event in ("PAYMENT_SUCCESS", "PAYMENT_SUCCESS_WEBHOOK"):
         student_id = order_row["student_id"]
         plan = order_row["plan"]
 
