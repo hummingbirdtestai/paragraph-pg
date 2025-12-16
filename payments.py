@@ -114,6 +114,10 @@ def verify_webhook_signature(raw_body: bytes, signature: str):
 # INITIATE PAYMENT
 # ───────────────────────────────────────────────
 
+@router.options("/initiate")
+async def initiate_options():
+    return {}
+
 @router.post("/initiate")
 async def initiate_payment(request: Request):
     ensure_cashfree_config()
@@ -180,6 +184,10 @@ async def initiate_payment(request: Request):
 # ───────────────────────────────────────────────
 # CASHFREE WEBHOOK
 # ───────────────────────────────────────────────
+
+@router.options("/webhook")
+async def webhook_options():
+    return {}
 
 @router.post("/webhook")
 async def cashfree_webhook(request: Request):
