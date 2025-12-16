@@ -116,10 +116,13 @@ def create_cashfree_order(order_id: str, amount: int, user: dict):
 
     return res.json()
 
+
+import hmac
+import hashlib
 import base64
 
 def verify_webhook_signature(raw_body: bytes, timestamp: str, signature: str):
-    message = f"{timestamp}.{raw_body.decode()}".encode()
+    message = timestamp.encode() + raw_body   # ❗ NO DOT
 
     digest = hmac.new(
         CASHFREE_SECRET_KEY.encode(),
