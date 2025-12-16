@@ -161,6 +161,31 @@ async def start_session(request: Request):
 
     return rpc.data[0]
 
+
+# ───────────────────────────────────────────────
+# 🔥 LOAD EXISTING SESSION (THIS WAS MISSING)
+# ───────────────────────────────────────────────
+@router.post("/session")
+async def get_session(request: Request):
+    data = await request.json()
+    session_id = data["session_id"]
+
+    row = (
+        supabase.table("student_mcq_session")
+        .select("id, dialogs")
+        .eq("id", session_id)
+        .limit(1)
+        .execute()
+    )
+
+    if not row.data:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    return {
+        "session_id": row.data[0]["id"],
+        "dialogs": row.data[0]["dialogs"],
+    }
+
 # ───────────────────────────────────────────────
 # CONTINUE CHAT (STUDENT → MENTOR)
 # ───────────────────────────────────────────────
