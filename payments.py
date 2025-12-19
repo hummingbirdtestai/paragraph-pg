@@ -217,6 +217,35 @@ async def initiate_payment(request: Request):
     }
 
 # ───────────────────────────────────────────────
+# STATUS PAYMENT
+# ───────────────────────────────────────────────
+
+@router.get("/status")
+async def get_payment_status(order_id: str):
+    ensure_cashfree_config()
+
+    if not order_id:
+        raise HTTPException(status_code=400, detail="order_id required")
+
+    res = requests.get(
+        f"{CASHFREE_BASE_URL}/orders/{order_id}",
+        headers=cashfree_headers(),
+        timeout=10
+    )
+
+    if res.status_code != 200:
+        logger.error(f"[STATUS] Cashfree error {res.text}")
+        raise HTTPException(status_code=502, detail="Unable to verify payment")
+
+    data = res.json()
+
+    return {
+        "order_id": order_id,
+        "order_status": data.get("order_status")  # SUCCESS | FAILED | CANCELLED | PENDING
+    }
+
+
+# ───────────────────────────────────────────────
 # CASHFREE WEBHOOK
 # ───────────────────────────────────────────────
 
