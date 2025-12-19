@@ -55,12 +55,14 @@ Learning Gap: {mcq_payload.get("learning_gap")}
         SYSTEM_PROMPT,
         [
             {
-                "role": "system",
-                "content": mcq_context
-            },
-            {
                 "role": "user",
-                "content": "Begin the discussion."
+                "content": f"""
+    Here is the MCQ the student is asking about:
+    
+    {mcq_payload}
+    
+    Begin the discussion.
+    """
             }
         ]
     )
@@ -164,7 +166,7 @@ Learning Gap: {mcq_payload.get("learning_gap")}
         {
             "p_student_id": student_id,
             "p_mcq_id": mcq_id,
-            "p_mcq_payload": None,
+            "p_mcq_payload": {},
             "p_new_dialogs": [
                 {
                     "role": "student",
