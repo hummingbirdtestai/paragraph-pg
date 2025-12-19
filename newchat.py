@@ -40,16 +40,6 @@ async def start_session(request: Request):
     mcq_id = data["mcq_id"]
     mcq_payload = data["mcq_payload"]
 
-    # ✅ ADD — MCQ CONTEXT INJECTION (NO EXISTING CODE TOUCHED)
-    mcq_context = f"""
-MCQ CONTEXT (DO NOT REPEAT VERBATIM):
-Stem: {mcq_payload.get("stem")}
-Options: {mcq_payload.get("options")}
-Correct Answer: {mcq_payload.get("correct_answer")}
-Feedback: {mcq_payload.get("feedback")}
-Learning Gap: {mcq_payload.get("learning_gap")}
-"""
-
     # 1️⃣ Ask GPT for FIRST mentor question
     mentor_reply = chat_with_gpt(
         SYSTEM_PROMPT,
@@ -57,12 +47,12 @@ Learning Gap: {mcq_payload.get("learning_gap")}
             {
                 "role": "user",
                 "content": f"""
-    Here is the MCQ the student is asking about:
-    
-    {mcq_payload}
-    
-    Begin the discussion.
-    """
+Here is the MCQ the student is asking about:
+
+{mcq_payload}
+
+Begin the discussion.
+"""
             }
         ]
     )
@@ -113,6 +103,7 @@ async def get_session(request: Request):
         "dialogs": row.data[0]["dialogs"],
     }
 
+
 # ───────────────────────────────────────────────
 # CONTINUE CHAT (STUDENT → MENTOR)
 # ───────────────────────────────────────────────
@@ -124,17 +115,21 @@ async def continue_chat(request: Request):
     mcq_id = data["mcq_id"]
     student_message = data["message"]
 
-    # ✅ ADD — LOAD MCQ PAYLOAD FOR CONTEXT (NO EXISTING CODE TOUCHED)
+    # ✅ FIX 1: LOAD dialogs (NOT mcq_payload column)
     row = (
         supabase.table("student_mcq_session")
-        .select("mcq_payload")
+        .select("dialogs")
         .eq("student_id", student_id)
         .eq("mcq_id", mcq_id)
         .limit(1)
         .execute()
     )
 
-    mcq_payload = row.data[0]["mcq_payload"]
+    if not row.data:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # ✅ FIX 2: MCQ payload lives in SYSTEM dialog
+    mcq_payload = row.data[0]["dialogs"][0]["content"]
 
     mcq_context = f"""
 MCQ CONTEXT (DO NOT REPEAT VERBATIM):
