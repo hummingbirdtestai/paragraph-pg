@@ -40,10 +40,24 @@ async def start_session(request: Request):
     mcq_id = data["mcq_id"]
     mcq_payload = data["mcq_payload"]
 
+    # ✅ ADD — MCQ CONTEXT INJECTION (NO EXISTING CODE TOUCHED)
+    mcq_context = f"""
+MCQ CONTEXT (DO NOT REPEAT VERBATIM):
+Stem: {mcq_payload.get("stem")}
+Options: {mcq_payload.get("options")}
+Correct Answer: {mcq_payload.get("correct_answer")}
+Feedback: {mcq_payload.get("feedback")}
+Learning Gap: {mcq_payload.get("learning_gap")}
+"""
+
     # 1️⃣ Ask GPT for FIRST mentor question
     mentor_reply = chat_with_gpt(
         SYSTEM_PROMPT,
         [
+            {
+                "role": "system",
+                "content": mcq_context
+            },
             {
                 "role": "user",
                 "content": "Begin the discussion."
@@ -74,7 +88,7 @@ async def start_session(request: Request):
 
 
 # ───────────────────────────────────────────────
-# 🔥 LOAD EXISTING SESSION (THIS WAS MISSING)
+# 🔥 LOAD EXISTING SESSION
 # ───────────────────────────────────────────────
 @router.post("/session")
 async def get_session(request: Request):
@@ -108,10 +122,35 @@ async def continue_chat(request: Request):
     mcq_id = data["mcq_id"]
     student_message = data["message"]
 
-    # 1️⃣ Ask GPT using ONLY student reply
+    # ✅ ADD — LOAD MCQ PAYLOAD FOR CONTEXT (NO EXISTING CODE TOUCHED)
+    row = (
+        supabase.table("student_mcq_session")
+        .select("mcq_payload")
+        .eq("student_id", student_id)
+        .eq("mcq_id", mcq_id)
+        .limit(1)
+        .execute()
+    )
+
+    mcq_payload = row.data[0]["mcq_payload"]
+
+    mcq_context = f"""
+MCQ CONTEXT (DO NOT REPEAT VERBATIM):
+Stem: {mcq_payload.get("stem")}
+Options: {mcq_payload.get("options")}
+Correct Answer: {mcq_payload.get("correct_answer")}
+Feedback: {mcq_payload.get("feedback")}
+Learning Gap: {mcq_payload.get("learning_gap")}
+"""
+
+    # 1️⃣ Ask GPT using student reply + MCQ context
     mentor_reply = chat_with_gpt(
         SYSTEM_PROMPT,
         [
+            {
+                "role": "system",
+                "content": mcq_context
+            },
             {
                 "role": "user",
                 "content": student_message
