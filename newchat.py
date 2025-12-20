@@ -61,7 +61,7 @@ Begin the discussion.
     # 2️⃣ Persist via RPC (system + assistant)
     rpc = supabase.rpc(
         "upsert_mcq_session_v11",
-        {
+        { 
             "p_student_id": student_id,
             "p_mcq_id": mcq_id,
             "p_mcq_payload": mcq_payload,
