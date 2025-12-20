@@ -42,21 +42,22 @@ async def start_session(request: Request):
     mcq_payload = data["mcq_payload"]
 
     # 1️⃣ Ask GPT for FIRST mentor question
-    mentor_reply = chat_with_gpt(
-        SYSTEM_PROMPT,
-        [
-            {
-                "role": "user",
-                "content": f"""
-Here is the MCQ the student is asking about:
-
-{mcq_payload}
-
-Begin the discussion.
-"""
-            }
-        ]
-    )
+    mentor_reply = chat_with_gpt([
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT
+        },
+        {
+            "role": "user",
+            "content": f"""
+    Here is the MCQ the student is asking about:
+    
+    {mcq_payload}
+    
+    Begin the discussion.
+    """
+        }
+    ])
 
     # 2️⃣ Persist via RPC (system + assistant)
     rpc = supabase.rpc(
@@ -68,7 +69,8 @@ Begin the discussion.
             "p_new_dialogs": [
                 {
                     "role": "assistant",
-                    "content": mentor_reply
+                    "content": mentor_reply,
+                    "mcq_payload": mcq_payload
                 }
             ]
         }
@@ -166,8 +168,13 @@ Learning Gap: {mcq_payload.get("learning_gap")}
         role = "assistant" if d["role"] == "assistant" else "user"
         gpt_messages.append({
             "role": role,
-            "content": d["content"]
+            "content": (
+                d["content"]
+                if isinstance(d["content"], str)
+                else str(d["content"])
+            )
         })
+
 
     gpt_messages.append({
         "role": "user",
