@@ -105,7 +105,7 @@ async def get_session(request: Request):
 
 
 # ───────────────────────────────────────────────
-# CONTINUE CHAT (STUDENT → MENTOR)
+# CONTINUE CHAT (STUDENT → MENTOR)  ✅ FIXED
 # ───────────────────────────────────────────────
 @router.post("/chat")
 async def continue_chat(request: Request):
@@ -115,23 +115,34 @@ async def continue_chat(request: Request):
     mcq_id = data["mcq_id"]
     student_message = data["message"]
 
-    # ✅ FIX 1: LOAD dialogs (NOT mcq_payload column)
+    # 1️⃣ Load FULL session (single source of truth)
     row = (
         supabase.table("student_mcq_session")
         .select("dialogs")
         .eq("student_id", student_id)
         .eq("mcq_id", mcq_id)
-        .limit(1)
+        .single()
         .execute()
     )
 
     if not row.data:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    # ✅ FIX 2: MCQ payload lives in SYSTEM dialog
-    mcq_payload = row.data[0]["dialogs"][0]["content"]
+    dialogs = row.data["dialogs"]
 
-    mcq_context = f"""
+    # 2️⃣ Extract MCQ payload from FIRST dialog (as designed)
+    # Assumption: first assistant message was created in /start
+    # and contains the MCQ payload context implicitly
+    mcq_payload = None
+    for d in dialogs:
+        if d["role"] == "assistant":
+            mcq_payload = d.get("mcq_payload")
+            break
+
+    # Fallback safety (if payload was not stored explicitly)
+    mcq_context = ""
+    if mcq_payload:
+        mcq_context = f"""
 MCQ CONTEXT (DO NOT REPEAT VERBATIM):
 Stem: {mcq_payload.get("stem")}
 Options: {mcq_payload.get("options")}
@@ -140,22 +151,43 @@ Feedback: {mcq_payload.get("feedback")}
 Learning Gap: {mcq_payload.get("learning_gap")}
 """
 
-    # 1️⃣ Ask GPT using student reply + MCQ context
+    # 3️⃣ Rebuild GPT messages EXACTLY like ChatGPT does
+    gpt_messages = []
+
+    # 🔒 Locked system prompt
+    gpt_messages.append({
+        "role": "system",
+        "content": SYSTEM_PROMPT
+    })
+
+    # 🧠 MCQ session context (hidden)
+    if mcq_context:
+        gpt_messages.append({
+            "role": "system",
+            "content": mcq_context
+        })
+
+    # 🔁 Replay ALL previous dialogs (THIS IS THE KEY FIX)
+    for d in dialogs:
+        role = "assistant" if d["role"] == "assistant" else "user"
+        gpt_messages.append({
+            "role": role,
+            "content": d["content"]
+        })
+
+    # ➕ Latest student input
+    gpt_messages.append({
+        "role": "user",
+        "content": student_message
+    })
+
+    # 4️⃣ Call GPT with FULL reconstructed context
     mentor_reply = chat_with_gpt(
         SYSTEM_PROMPT,
-        [
-            {
-                "role": "system",
-                "content": mcq_context
-            },
-            {
-                "role": "user",
-                "content": student_message
-            }
-        ]
+        gpt_messages
     )
 
-    # 2️⃣ Append student + assistant via RPC
+    # 5️⃣ Persist new turn (append-only, stable)
     rpc = supabase.rpc(
         "upsert_mcq_session_v11",
         {
