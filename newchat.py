@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Request, HTTPException
 from supabase_client import supabase
 from gpt_utils import chat_with_gpt
+from fastapi.responses import StreamingResponse
 
 router = APIRouter()
 
@@ -103,9 +104,8 @@ async def get_session(request: Request):
         "dialogs": row.data[0]["dialogs"],
     }
 
-
 # ───────────────────────────────────────────────
-# CONTINUE CHAT (STUDENT → MENTOR)  ✅ FIXED
+# CONTINUE CHAT (STUDENT → MENTOR) — STREAMING
 # ───────────────────────────────────────────────
 @router.post("/chat")
 async def continue_chat(request: Request):
@@ -130,16 +130,13 @@ async def continue_chat(request: Request):
 
     dialogs = row.data["dialogs"]
 
-    # 2️⃣ Extract MCQ payload from FIRST dialog (as designed)
-    # Assumption: first assistant message was created in /start
-    # and contains the MCQ payload context implicitly
+    # 2️⃣ Extract MCQ payload (optional safety)
     mcq_payload = None
     for d in dialogs:
-        if d["role"] == "assistant":
-            mcq_payload = d.get("mcq_payload")
+        if d["role"] == "assistant" and isinstance(d.get("mcq_payload"), dict):
+            mcq_payload = d["mcq_payload"]
             break
 
-    # Fallback safety (if payload was not stored explicitly)
     mcq_context = ""
     if mcq_payload:
         mcq_context = f"""
@@ -151,23 +148,20 @@ Feedback: {mcq_payload.get("feedback")}
 Learning Gap: {mcq_payload.get("learning_gap")}
 """
 
-    # 3️⃣ Rebuild GPT messages EXACTLY like ChatGPT does
+    # 3️⃣ Rebuild GPT messages (ChatGPT-style)
     gpt_messages = []
 
-    # 🔒 Locked system prompt
     gpt_messages.append({
         "role": "system",
         "content": SYSTEM_PROMPT
     })
 
-    # 🧠 MCQ session context (hidden)
     if mcq_context:
         gpt_messages.append({
             "role": "system",
             "content": mcq_context
         })
 
-    # 🔁 Replay ALL previous dialogs (THIS IS THE KEY FIX)
     for d in dialogs:
         role = "assistant" if d["role"] == "assistant" else "user"
         gpt_messages.append({
@@ -175,42 +169,44 @@ Learning Gap: {mcq_payload.get("learning_gap")}
             "content": d["content"]
         })
 
-    # ➕ Latest student input
     gpt_messages.append({
         "role": "user",
         "content": student_message
     })
 
-    # 4️⃣ Call GPT with FULL reconstructed context
-    mentor_reply = chat_with_gpt(
-        SYSTEM_PROMPT,
-        gpt_messages
-    )
+    # 4️⃣ STREAMING GENERATOR
+    def event_generator():
+        full_reply = ""
 
-    # 5️⃣ Persist new turn (append-only, stable)
-    rpc = supabase.rpc(
-        "upsert_mcq_session_v11",
-        {
-            "p_student_id": student_id,
-            "p_mcq_id": mcq_id,
-            "p_mcq_payload": {},
-            "p_new_dialogs": [
+        try:
+            from gpt_utils import stream_chat_with_gpt
+
+            for token in stream_chat_with_gpt(gpt_messages):
+                full_reply += token
+                yield token
+
+        finally:
+            # 5️⃣ Persist AFTER stream completes (critical)
+            supabase.rpc(
+                "upsert_mcq_session_v11",
                 {
-                    "role": "student",
-                    "content": student_message
-                },
-                {
-                    "role": "assistant",
-                    "content": mentor_reply
+                    "p_student_id": student_id,
+                    "p_mcq_id": mcq_id,
+                    "p_mcq_payload": {},
+                    "p_new_dialogs": [
+                        {
+                            "role": "student",
+                            "content": student_message
+                        },
+                        {
+                            "role": "assistant",
+                            "content": full_reply
+                        }
+                    ]
                 }
-            ]
-        }
-    ).execute()
+            ).execute()
 
-    if not rpc.data:
-        raise HTTPException(status_code=500, detail="Failed to continue MCQ session")
-
-    return {
-        "mentor_reply": mentor_reply,
-        "session": rpc.data[0]
-    }
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/plain"
+    )
