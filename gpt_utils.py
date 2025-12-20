@@ -49,16 +49,16 @@ def stream_chat_with_gpt(
     Yields plain text chunks.
     """
 
-    stream = client.chat.completions.stream(
+    with client.chat.completions.stream(
         model=model,
         messages=messages,
         temperature=temperature,
-    )
+    ) as stream:
 
-    for event in stream:
-        # Text deltas only (ignore tool calls, metadata, etc.)
-        if event.type == "response.output_text.delta":
-            yield event.delta
+        for event in stream:
+            # Only emit actual text deltas
+            if event.type == "response.output_text.delta":
+                yield event.delta
 
 
 # ------------------------------------------------------------------
@@ -97,3 +97,4 @@ def summarize_dialogs(
     )
 
     return response.choices[0].message.content
+
