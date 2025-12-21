@@ -73,7 +73,8 @@ async def mocktest_orchestrate(request: Request):
                 "p_react_order_final": react_order_final,
                 "p_student_answer": student_answer,
                 "p_is_correct": is_correct,
-                "p_time_left": str(time_left)
+                "p_time_left": str(time_left),
+                "p_is_review": payload.get("is_review", False)   # 🆕
             })
 
         elif action == "skip_mocktest_phase":
