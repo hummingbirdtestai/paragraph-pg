@@ -25,6 +25,9 @@ app.add_middleware(
 @app.post("/mocktest_orchestrate")
 async def mocktest_orchestrate(request: Request):
     payload = await request.json()
+    print("🚨 RAW PAYLOAD RECEIVED")
+    print(json.dumps(payload, indent=2))
+    print("🕒 SERVER TIME:", datetime.utcnow().isoformat())
     action = payload.get("intent")
     student_id = payload.get("student_id")
     exam_serial = payload.get("exam_serial")
@@ -67,6 +70,11 @@ async def mocktest_orchestrate(request: Request):
 
         elif action == "next_mocktest_phase":
             print("🟢 Calling RPC → next_orchestra_mocktest")
+            print("🔥 next_orchestra_mocktest PAYLOAD", {
+                "react_order_final": react_order_final,
+                "is_review": payload.get("is_review"),
+                "time_left": time_left_str,
+            })
             result = call_rpc("next_orchestra_mocktest", {
                 "p_student_id": student_id,
                 "p_exam_serial": exam_serial,
