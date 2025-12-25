@@ -141,6 +141,18 @@ async def auto_start_battle(battle_id: str, background_tasks: BackgroundTasks):
 
     supabase.table("battle_schedule").update({"status": "Active"}).eq("battle_id", battle_id).execute()
 
+    # 🔴 ADDED FOR BATTLE_STATE FIX — ONE-TIME ROW CREATION
+    supabase.table("battle_state").insert({
+        "battle_id": battle_id,
+        "phase": "lobby",
+        "current_question_index": 0,
+        "question_payload": None,
+        "stats_payload": None,
+        "leaderboard_payload": None,
+        "time_left": 0,
+        "updated_at": datetime.now(ist).isoformat(),
+    }).execute()
+
     active_battles.add(battle_id)
     background_tasks.add_task(run_battle_sequence, battle_id)
 
@@ -148,7 +160,7 @@ async def auto_start_battle(battle_id: str, background_tasks: BackgroundTasks):
     return {"success": True}
 
 # -----------------------------------------------------
-# 🔍 Minute-wise AutoStart Checker (FIXED)
+# 🔍 Minute-wise AutoStart Checker
 # -----------------------------------------------------
 def minute_check_auto_starter():
     now = datetime.now(ist)
@@ -198,8 +210,18 @@ def update_battle_state(
     time_left=0,
     index=None
 ):
+    # 🔴 ADDED FOR BATTLE_STATE FIX — READ EXISTING LEADERBOARD
+    existing = (
+        supabase
+        .table("battle_state")
+        .select("leaderboard_payload")
+        .eq("battle_id", battle_id)
+        .single()
+        .execute()
+        .data
+    )
+
     payload = {
-        "battle_id": battle_id,
         "phase": phase,
         "time_left": time_left,
         "updated_at": datetime.now(ist).isoformat(),
@@ -211,10 +233,13 @@ def update_battle_state(
         payload["question_payload"] = question
     if stats is not None:
         payload["stats_payload"] = stats
+
+    # 🔴 ADDED FOR BATTLE_STATE FIX — NEVER CLEAR LEADERBOARD
     if leaderboard is not None:
         payload["leaderboard_payload"] = leaderboard
+    else:
+        payload["leaderboard_payload"] = existing.get("leaderboard_payload")
 
-    # 🔍 ADD THIS LOG — EXACT PLACE
     logger.info(
         f"🧠 BATTLE_STATE WRITE → {battle_id} | "
         f"phase={phase} | "
@@ -227,11 +252,10 @@ def update_battle_state(
     supabase.table("battle_state").update(payload).eq("battle_id", battle_id).execute()
 
 # -----------------------------------------------------
-# 🔹 Battle Review Endpoint (ADDED)
+# 🔹 Battle Review Endpoint
 # -----------------------------------------------------
 @app.post("/battle/review")
 async def get_battle_review(data: dict):
-
     title = data.get("title")
     date = data.get("scheduled_date")
     student_id = data.get("student_id")
@@ -260,7 +284,6 @@ async def get_battle_review(data: dict):
     except Exception as e:
         logger.error(f"💥 get_battle_review failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 # -----------------------------------------------------
 # 🔹 Main Orchestrator (unchanged)
