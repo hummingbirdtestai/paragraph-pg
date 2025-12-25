@@ -1,3 +1,6 @@
+# -----------------------------------------------------
+# BATTLE.PY
+# -----------------------------------------------------
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
@@ -186,17 +189,42 @@ scheduler.add_job(minute_check_auto_starter, CronTrigger(second="0"))
 # -----------------------------------------------------
 # 🔥 Update Battle State Helper
 # -----------------------------------------------------
-def update_battle_state(battle_id: str, phase: str, question=None, stats=None, leaderboard=None, time_left=0, index=None):
-    supabase.table("battle_state").upsert({
+def update_battle_state(
+    battle_id: str,
+    phase: str,
+    question=None,
+    stats=None,
+    leaderboard=None,
+    time_left=0,
+    index=None
+):
+    payload = {
         "battle_id": battle_id,
         "phase": phase,
-        "current_question_index": index,
-        "question_payload": question,
-        "stats_payload": stats,
-        "leaderboard_payload": leaderboard,
         "time_left": time_left,
-        "updated_at": datetime.now(ist).isoformat()
-    }).execute()
+        "updated_at": datetime.now(ist).isoformat(),
+    }
+
+    if index is not None:
+        payload["current_question_index"] = index
+    if question is not None:
+        payload["question_payload"] = question
+    if stats is not None:
+        payload["stats_payload"] = stats
+    if leaderboard is not None:
+        payload["leaderboard_payload"] = leaderboard
+
+    # 🔍 ADD THIS LOG — EXACT PLACE
+    logger.info(
+        f"🧠 BATTLE_STATE WRITE → {battle_id} | "
+        f"phase={phase} | "
+        f"Q={'Y' if question is not None else '—'} | "
+        f"S={'Y' if stats is not None else '—'} | "
+        f"L={'Y' if leaderboard is not None else '—'} | "
+        f"time_left={time_left}"
+    )
+
+    supabase.table("battle_state").upsert(payload).execute()
 
 # -----------------------------------------------------
 # 🔹 Battle Review Endpoint (ADDED)
