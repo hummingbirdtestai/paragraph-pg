@@ -224,7 +224,7 @@ def update_battle_state(
         f"time_left={time_left}"
     )
 
-    supabase.table("battle_state").upsert(payload).execute()
+    supabase.table("battle_state").update(payload).eq("battle_id", battle_id).execute()
 
 # -----------------------------------------------------
 # 🔹 Battle Review Endpoint (ADDED)
