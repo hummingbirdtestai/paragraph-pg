@@ -306,40 +306,38 @@ Learning Gap: {mcq_payload.get("learning_gap")}
 
     def event_generator():
         full_reply = ""
-
+    
         try:
             full_reply = chat_with_gpt(gpt_messages)
             yield full_reply
-                full_reply += token
-                yield token
         finally:
             elapsed = round(time.time() - start_time, 2)
-
+    
             prev_block = tutor_state.get("last_block")
             last_block = detect_last_block(full_reply)
-
+    
             if not full_reply.strip():
                 logger.error(
                     "[ASK_PARAGRAPH][GPT_EMPTY_REPLY] last_block=%s student_msg='%s'",
                     prev_block,
                     student_message,
                 )
-
+    
             if last_block != "[STUDENT_REPLY_REQUIRED]":
                 logger.warning(
                     "[ASK_PARAGRAPH][MCQ_LOOP_BREAK] Expected STUDENT_REPLY_REQUIRED, got=%s",
                     last_block,
                 )
-
+    
             logger.info(
                 "[ASK_PARAGRAPH][BLOCK_TRANSITION] %s → %s",
                 prev_block,
                 last_block,
             )
-
+    
             tutor_state["last_block"] = last_block
             tutor_state["turns"] = (tutor_state.get("turns", 0) or 0) + 1
-
+    
             supabase.rpc(
                 "upsert_mcq_session_v11",
                 {
@@ -353,7 +351,7 @@ Learning Gap: {mcq_payload.get("learning_gap")}
                     "p_tutor_state": tutor_state,
                 }
             ).execute()
-
+    
             state = extract_state({
                 "dialogs": dialogs + [
                     {"role": "student", "content": student_message},
@@ -361,17 +359,18 @@ Learning Gap: {mcq_payload.get("learning_gap")}
                 ],
                 "current_concept": tutor_state.get("concept"),
             })
-
+    
             suggestions = generate_suggestions(state)
-
+    
             logger.info(
                 "[ASK_PARAGRAPH][SUGGESTIONS] ids=%s",
                 [s["id"] for s in suggestions],
             )
-
+    
             supabase.table("student_mcq_session").update(
                 {"next_suggestions": suggestions}
             ).eq("student_id", student_id).eq("mcq_id", mcq_id).execute()
+
 
     return StreamingResponse(
         event_generator(),
