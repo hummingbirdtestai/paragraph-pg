@@ -141,7 +141,6 @@ async def auto_start_battle(battle_id: str, background_tasks: BackgroundTasks):
 
     supabase.table("battle_schedule").update({"status": "Active"}).eq("battle_id", battle_id).execute()
 
-    # 🔴 ADDED FOR BATTLE_STATE FIX — ONE-TIME ROW CREATION
     supabase.table("battle_state").insert({
         "battle_id": battle_id,
         "phase": "lobby",
@@ -210,7 +209,6 @@ def update_battle_state(
     time_left=0,
     index=None
 ):
-    # 🔴 ADDED FOR BATTLE_STATE FIX — READ EXISTING LEADERBOARD
     existing = (
         supabase
         .table("battle_state")
@@ -234,7 +232,6 @@ def update_battle_state(
     if stats is not None:
         payload["stats_payload"] = stats
 
-    # 🔴 ADDED FOR BATTLE_STATE FIX — NEVER CLEAR LEADERBOARD
     if leaderboard is not None:
         payload["leaderboard_payload"] = leaderboard
     else:
@@ -310,19 +307,27 @@ async def run_battle_sequence(battle_id: str):
                 update_battle_state(battle_id, "question", question=mcq, time_left=r, index=react_order)
                 await asyncio.sleep(1)
 
-            bar = supabase.rpc("get_battle_stats", {"mcq_id_input": mcq_id}).execute().data or []
+            bar = supabase.rpc(
+                "get_battle_stats",
+                {
+                    "battle_id_input": battle_id,
+                    "mcq_id_input": mcq_id
+                }
+            ).execute().data or []
+
             bar_payload = bar[0] if bar else {}
             broadcast_event(battle_id, "show_stats", bar_payload)
-            update_battle_state(battle_id, "stats", stats=bar_payload, time_left=10)
+            update_battle_state(battle_id, "results", stats=bar_payload, time_left=10)
 
             for r in range(10, 0, -1):
-                update_battle_state(battle_id, "stats", stats=bar_payload, time_left=r)
+                update_battle_state(battle_id, "results", stats=bar_payload, time_left=r)
                 await asyncio.sleep(1)
 
             lead = supabase.rpc(
                 "get_leader_board",
                 {"battle_id_input": battle_id, "mcq_id_input": mcq_id}
             ).execute().data or []
+
             lead_payload = lead
             broadcast_event(battle_id, "update_leaderboard", lead_payload)
             update_battle_state(battle_id, "leaderboard", leaderboard=lead_payload, time_left=10)
