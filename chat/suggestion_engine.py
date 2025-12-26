@@ -1,4 +1,4 @@
-from gpt.client import client
+from gpt_utils import chat_with_gpt
 from chat.suggestions_catalog import SUGGESTION_CATALOG
 
 def generate_suggestions(state):
@@ -31,9 +31,8 @@ Allowed actions:
 {allowed_text}
 """
 
-    res = client.chat.completions.create(
-        model="gpt-5-mini",
-        messages=[
+    reply = chat_with_gpt(
+        [
             { "role": "system", "content": "You are a UX decision engine." },
             { "role": "user", "content": prompt }
         ],
@@ -42,11 +41,10 @@ Allowed actions:
 
     chosen_ids = [
         line.strip()
-        for line in res.choices[0].message.content.splitlines()
+        for line in reply.splitlines()
         if line.strip()
     ]
 
-    # Map IDs back to labels
     return [
         a for a in allowed
         if a["id"] in chosen_ids
