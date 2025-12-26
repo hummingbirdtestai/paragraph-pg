@@ -9,6 +9,22 @@ from payments import router as payments_router
 import json
 from notify import router as notify_router
 
+# MAIN.PY
+import logging
+from fastapi import FastAPI
+
+# ───────────────────────────────────────────────
+# 🔥 GLOBAL LOGGING CONFIG — MUST BE HERE
+# ───────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+
+logging.getLogger("ask_paragraph").setLevel(logging.DEBUG)
+logging.getLogger("ask_paragraph.state").setLevel(logging.DEBUG)
+logging.getLogger("ask_paragraph.suggestions").setLevel(logging.DEBUG)
+
 # ───────────────────────────────────────────────
 # Initialize FastAPI app
 # ───────────────────────────────────────────────
@@ -394,6 +410,7 @@ async def resolve_mcq(request: Request):
 @app.get("/")
 def home():
     return {"message": "🧠 Review flow now includes seq_num & total_count + Resolve MCQ Intent Added ✅"}
+
 
 
 
