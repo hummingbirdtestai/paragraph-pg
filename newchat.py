@@ -224,6 +224,11 @@ async def continue_chat(request: Request):
     student_message = data["message"]
 
     logger.info(
+        "[ASK_PARAGRAPH][STUDENT_INPUT] raw='%s'",
+        student_message.strip(),
+    )
+    
+    logger.info(
         f"[ASK_PARAGRAPH][CHAT] student_id={student_id} mcq_id={mcq_id} "
         f"message_len={len(student_message or '')}"
     )
@@ -279,6 +284,12 @@ Learning Gap: {mcq_payload.get("learning_gap")}
     gpt_messages.extend(normalize_dialogs(dialogs))
     gpt_messages.append({"role": "user", "content": student_message})
 
+    logger.info(
+        "[ASK_PARAGRAPH][GPT_REPLAY] messages=%d chars≈%d",
+        len(gpt_messages),
+        sum(len(m["content"]) for m in gpt_messages),
+    )
+
     def event_generator():
         full_reply = ""
 
@@ -292,6 +303,19 @@ Learning Gap: {mcq_payload.get("learning_gap")}
 
             prev_block = tutor_state.get("last_block")
             last_block = detect_last_block(full_reply)
+            
+            if not full_reply.strip():
+                logger.error(
+                    "[ASK_PARAGRAPH][GPT_EMPTY_REPLY] last_block=%s student_msg='%s'",
+                    prev_block,
+                    student_message,
+                )
+
+            if last_block != "[STUDENT_REPLY_REQUIRED]":
+                logger.warning(
+                    "[ASK_PARAGRAPH][MCQ_LOOP_BREAK] Expected STUDENT_REPLY_REQUIRED, got=%s",
+                    last_block,
+                )
 
             logger.info(
                 "[ASK_PARAGRAPH][BLOCK_TRANSITION] %s → %s",
