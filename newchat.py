@@ -285,26 +285,17 @@ Learning Gap: {mcq_payload.get("learning_gap")}
 
     # 🔧 SURGICAL CHANGE — ONLY CHANGE IN ENTIRE FILE
     gpt_messages.append({
-        "role": "system",
+        "role": "user",
         "content": f"""
-The student has responded with the following message:
-
-\"\"\"{student_message}\"\"\"
-
-IMPORTANT:
-• This message may be an MCQ answer (letter OR free text) OR a question.
-• YOU must decide which it is.
-• If it is a QUESTION:
-    - Answer it clearly.
-    - Re-ask the SAME MCQ.
-    - End with [STUDENT_REPLY_REQUIRED].
-• If it is an ANSWER:
-    - Evaluate correctness strictly.
-    - Follow all MCQ rules.
-• NEVER return empty output.
-• NEVER skip semantic blocks.
-• NEVER break the MCQ loop.
-"""
+    Student response:
+    \"\"\"{student_message}\"\"\"
+    
+    Decide whether this is:
+    - an MCQ answer (letter or free text), OR
+    - a question.
+    
+    Follow all conversation rules strictly.
+    """
     })
 
     logger.info(
