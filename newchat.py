@@ -264,7 +264,13 @@ Learning Gap: {mcq_payload.get("learning_gap")}
                 f"last_block={last_block} time={elapsed}s"
             )
 
-            tutor_state["last_block"] = last_block
+            # 🔒 NORMALIZE last_block so session can progress correctly
+            if last_block == "[STUDENT_REPLY_REQUIRED]":
+                tutor_state["last_block"] = "[STUDENT_REPLY_REQUIRED]"
+            else:
+                # Any other block means mentor has responded → unlock flow
+                tutor_state["last_block"] = last_block
+              
             tutor_state["turns"] = (tutor_state.get("turns", 0) or 0) + 1
 
             # 💾 Persist dialogs + tutor_state
