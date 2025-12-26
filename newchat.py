@@ -22,6 +22,46 @@ logger.setLevel(logging.INFO)
 router = APIRouter()
 
 # ───────────────────────────────────────────────
+# DIALOG NORMALIZER (GPT SAFETY GATE)
+# ───────────────────────────────────────────────
+def normalize_dialogs(dialogs):
+    """
+    Enforces GPT-safe dialog schema:
+    - skips system messages
+    - skips non-string content
+    - maps roles to OpenAI-compatible roles
+    """
+    safe = []
+    skipped = 0
+
+    for d in dialogs:
+        role = d.get("role")
+        content = d.get("content")
+
+        if role == "system":
+            skipped += 1
+            continue
+
+        if not isinstance(content, str):
+            skipped += 1
+            continue
+
+        safe.append({
+            "role": "assistant" if role == "assistant" else "user",
+            "content": content,
+        })
+
+    if skipped:
+        logger.warning(
+            "[ASK_PARAGRAPH][NORMALIZE] skipped=%d total=%d",
+            skipped,
+            len(dialogs),
+        )
+
+    return safe
+
+
+# ───────────────────────────────────────────────
 # 🔒 VERBATIM SYSTEM PROMPT (DO NOT MODIFY)
 # ───────────────────────────────────────────────
 SYSTEM_PROMPT = """
@@ -61,7 +101,6 @@ async def start_session(request: Request):
         f"[ASK_PARAGRAPH][START] student_id={student_id} mcq_id={mcq_id}"
     )
 
-    # 1️⃣ Ask GPT for FIRST mentor response
     mentor_reply = chat_with_gpt([
         {"role": "system", "content": SYSTEM_PROMPT},
         {
@@ -81,7 +120,6 @@ Begin the discussion.
         f"(chars={len(mentor_reply)})"
     )
 
-    # 2️⃣ Persist initial dialog
     rpc = supabase.rpc(
         "upsert_mcq_session_v11",
         {
@@ -109,6 +147,7 @@ Begin the discussion.
     )
 
     return rpc.data[0]
+
 
 # ───────────────────────────────────────────────
 # 🔥 LOAD EXISTING SESSION
@@ -148,6 +187,7 @@ async def get_session(request: Request):
         "next_suggestions": row.data[0]["next_suggestions"],
     }
 
+
 # ───────────────────────────────────────────────
 # CONTINUE CHAT (STUDENT → MENTOR) — STREAMING
 # ───────────────────────────────────────────────
@@ -165,7 +205,6 @@ async def continue_chat(request: Request):
         f"message_len={len(student_message or '')}"
     )
 
-    # 1️⃣ Load FULL session
     row = (
         supabase.table("student_mcq_session")
         .select("dialogs, tutor_state")
@@ -185,33 +224,18 @@ async def continue_chat(request: Request):
     dialogs = row.data["dialogs"]
     tutor_state = row.data["tutor_state"] or {}
 
-    logger.info(
-        f"[ASK_PARAGRAPH][STATE] last_block={tutor_state.get('last_block')} "
-        f"turns={tutor_state.get('turns')}"
-    )
-
-    # 🚨 ENFORCEMENT: prevent skipping mentor
     if tutor_state.get("last_block") == "[STUDENT_REPLY_REQUIRED]":
         if not student_message or not student_message.strip():
-            logger.warning(
-                f"[ASK_PARAGRAPH][BLOCKED] Empty student reply blocked"
-            )
             raise HTTPException(
                 status_code=409,
                 detail="Student response required before proceeding"
             )
 
-    # 2️⃣ Extract MCQ payload
     mcq_payload = None
     for d in dialogs:
         if d["role"] == "assistant" and isinstance(d.get("mcq_payload"), dict):
             mcq_payload = d["mcq_payload"]
             break
-
-    if mcq_payload:
-        logger.info("[ASK_PARAGRAPH][MCQ] MCQ context restored")
-    else:
-        logger.warning("[ASK_PARAGRAPH][MCQ] MCQ payload missing")
 
     mcq_context = ""
     if mcq_payload:
@@ -224,62 +248,35 @@ Feedback: {mcq_payload.get("feedback")}
 Learning Gap: {mcq_payload.get("learning_gap")}
 """
 
-    # 3️⃣ Build GPT messages
     gpt_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     if mcq_context:
         gpt_messages.append({"role": "system", "content": mcq_context})
 
-    # 🔧 SURGICAL FIX: do NOT replay system JSON or non-string content
-    for d in dialogs:
-        if d.get("role") == "system":
-            continue
-
-        if not isinstance(d.get("content"), str):
-            logger.warning(
-                "[ASK_PARAGRAPH][SKIP] Non-string dialog skipped role=%s",
-                d.get("role"),
-            )
-            continue
-
-        gpt_messages.append({
-            "role": "assistant" if d["role"] == "assistant" else "user",
-            "content": d["content"],
-        })
-
+    gpt_messages.extend(normalize_dialogs(dialogs))
     gpt_messages.append({"role": "user", "content": student_message})
 
-    logger.info(
-        f"[ASK_PARAGRAPH][GPT] Replaying {len(gpt_messages)} messages"
-    )
-
-    # 4️⃣ STREAMING GENERATOR
     def event_generator():
         full_reply = ""
 
         try:
             from gpt_utils import stream_chat_with_gpt
-
             for token in stream_chat_with_gpt(gpt_messages):
                 full_reply += token
                 yield token
-
         finally:
             elapsed = round(time.time() - start_time, 2)
 
-            # 🧠 Semantic block detection
+            prev_block = tutor_state.get("last_block")
             last_block = detect_last_block(full_reply)
 
             logger.info(
-                f"[ASK_PARAGRAPH][GPT_DONE] chars={len(full_reply)} "
-                f"last_block={last_block} time={elapsed}s"
+                "[ASK_PARAGRAPH][BLOCK_TRANSITION] %s → %s",
+                prev_block,
+                last_block,
             )
 
-            if last_block == "[STUDENT_REPLY_REQUIRED]":
-                tutor_state["last_block"] = "[STUDENT_REPLY_REQUIRED]"
-            else:
-                tutor_state["last_block"] = last_block
-
+            tutor_state["last_block"] = last_block
             tutor_state["turns"] = (tutor_state.get("turns", 0) or 0) + 1
 
             supabase.rpc(
@@ -296,28 +293,24 @@ Learning Gap: {mcq_payload.get("learning_gap")}
                 }
             ).execute()
 
-            logger.info(
-                f"[ASK_PARAGRAPH][DB] Dialogs persisted. turns={tutor_state['turns']}"
-            )
-
-            session_for_state = {
+            state = extract_state({
                 "dialogs": dialogs + [
                     {"role": "student", "content": student_message},
                     {"role": "assistant", "content": full_reply},
                 ],
                 "current_concept": tutor_state.get("concept"),
-            }
+            })
 
-            state = extract_state(session_for_state)
             suggestions = generate_suggestions(state)
+
+            logger.info(
+                "[ASK_PARAGRAPH][SUGGESTIONS] ids=%s",
+                [s["id"] for s in suggestions],
+            )
 
             supabase.table("student_mcq_session").update(
                 {"next_suggestions": suggestions}
             ).eq("student_id", student_id).eq("mcq_id", mcq_id).execute()
-
-            logger.info(
-                f"[ASK_PARAGRAPH][SUGGESTIONS] generated={len(suggestions)}"
-            )
 
     return StreamingResponse(
         event_generator(),
