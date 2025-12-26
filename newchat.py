@@ -1,7 +1,23 @@
+# ───────────────────────────────────────────────
+# NEWCHAT.PY
+# ───────────────────────────────────────────────
+
 from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import StreamingResponse
+import logging
+import time
+
 from supabase_client import supabase
 from gpt_utils import chat_with_gpt
-from fastapi.responses import StreamingResponse
+
+from chat.state_extractor import detect_last_block, extract_state
+from chat.suggestion_engine import generate_suggestions
+
+# ───────────────────────────────────────────────
+# LOGGER SETUP
+# ───────────────────────────────────────────────
+logger = logging.getLogger("ask_paragraph")
+logger.setLevel(logging.INFO)
 
 router = APIRouter()
 
@@ -41,28 +57,34 @@ async def start_session(request: Request):
     mcq_id = data["mcq_id"]
     mcq_payload = data["mcq_payload"]
 
-    # 1️⃣ Ask GPT for FIRST mentor question
+    logger.info(
+        f"[ASK_PARAGRAPH][START] student_id={student_id} mcq_id={mcq_id}"
+    )
+
+    # 1️⃣ Ask GPT for FIRST mentor response
     mentor_reply = chat_with_gpt([
-        {
-            "role": "system",
-            "content": SYSTEM_PROMPT
-        },
+        {"role": "system", "content": SYSTEM_PROMPT},
         {
             "role": "user",
             "content": f"""
-    Here is the MCQ the student is asking about:
-    
-    {mcq_payload}
-    
-    Begin the discussion.
-    """
+Here is the MCQ the student is asking about:
+
+{mcq_payload}
+
+Begin the discussion.
+"""
         }
     ])
 
-    # 2️⃣ Persist via RPC (system + assistant)
+    logger.info(
+        f"[ASK_PARAGRAPH][START] Initial mentor reply generated "
+        f"(chars={len(mentor_reply)})"
+    )
+
+    # 2️⃣ Persist initial dialog
     rpc = supabase.rpc(
         "upsert_mcq_session_v11",
-        { 
+        {
             "p_student_id": student_id,
             "p_mcq_id": mcq_id,
             "p_mcq_payload": mcq_payload,
@@ -77,10 +99,16 @@ async def start_session(request: Request):
     ).execute()
 
     if not rpc.data:
+        logger.error(
+            f"[ASK_PARAGRAPH][START][ERROR] Failed to persist session"
+        )
         raise HTTPException(status_code=500, detail="Failed to start MCQ session")
 
-    return rpc.data[0]
+    logger.info(
+        f"[ASK_PARAGRAPH][START] Session created successfully"
+    )
 
+    return rpc.data[0]
 
 # ───────────────────────────────────────────────
 # 🔥 LOAD EXISTING SESSION
@@ -90,20 +118,34 @@ async def get_session(request: Request):
     data = await request.json()
     session_id = data["session_id"]
 
+    logger.info(
+        f"[ASK_PARAGRAPH][SESSION] Fetch session_id={session_id}"
+    )
+
     row = (
         supabase.table("student_mcq_session")
-        .select("id, dialogs")
+        .select("id, dialogs, tutor_state, next_suggestions")
         .eq("id", session_id)
         .limit(1)
         .execute()
     )
 
     if not row.data:
+        logger.warning(
+            f"[ASK_PARAGRAPH][SESSION][404] Session not found session_id={session_id}"
+        )
         raise HTTPException(status_code=404, detail="Session not found")
+
+    logger.info(
+        f"[ASK_PARAGRAPH][SESSION] Loaded dialogs={len(row.data[0]['dialogs'])} "
+        f"turns={row.data[0]['tutor_state'].get('turns')}"
+    )
 
     return {
         "session_id": row.data[0]["id"],
         "dialogs": row.data[0]["dialogs"],
+        "tutor_state": row.data[0]["tutor_state"],
+        "next_suggestions": row.data[0]["next_suggestions"],
     }
 
 # ───────────────────────────────────────────────
@@ -111,16 +153,22 @@ async def get_session(request: Request):
 # ───────────────────────────────────────────────
 @router.post("/chat")
 async def continue_chat(request: Request):
-    data = await request.json()
+    start_time = time.time()
 
+    data = await request.json()
     student_id = data["student_id"]
     mcq_id = data["mcq_id"]
     student_message = data["message"]
 
-    # 1️⃣ Load FULL session (single source of truth)
+    logger.info(
+        f"[ASK_PARAGRAPH][CHAT] student_id={student_id} mcq_id={mcq_id} "
+        f"message_len={len(student_message or '')}"
+    )
+
+    # 1️⃣ Load FULL session
     row = (
         supabase.table("student_mcq_session")
-        .select("dialogs")
+        .select("dialogs, tutor_state")
         .eq("student_id", student_id)
         .eq("mcq_id", mcq_id)
         .single()
@@ -128,16 +176,42 @@ async def continue_chat(request: Request):
     )
 
     if not row.data:
+        logger.warning(
+            f"[ASK_PARAGRAPH][CHAT][404] Session not found "
+            f"student_id={student_id} mcq_id={mcq_id}"
+        )
         raise HTTPException(status_code=404, detail="Session not found")
 
     dialogs = row.data["dialogs"]
+    tutor_state = row.data["tutor_state"] or {}
 
-    # 2️⃣ Extract MCQ payload (optional safety)
+    logger.info(
+        f"[ASK_PARAGRAPH][STATE] last_block={tutor_state.get('last_block')} "
+        f"turns={tutor_state.get('turns')}"
+    )
+
+    # 🚨 ENFORCEMENT: prevent skipping mentor
+    if tutor_state.get("last_block") == "[STUDENT_REPLY_REQUIRED]":
+        if not student_message or not student_message.strip():
+            logger.warning(
+                f"[ASK_PARAGRAPH][BLOCKED] Empty student reply blocked"
+            )
+            raise HTTPException(
+                status_code=409,
+                detail="Student response required before proceeding"
+            )
+
+    # 2️⃣ Extract MCQ payload
     mcq_payload = None
     for d in dialogs:
         if d["role"] == "assistant" and isinstance(d.get("mcq_payload"), dict):
             mcq_payload = d["mcq_payload"]
             break
+
+    if mcq_payload:
+        logger.info("[ASK_PARAGRAPH][MCQ] MCQ context restored")
+    else:
+        logger.warning("[ASK_PARAGRAPH][MCQ] MCQ payload missing")
 
     mcq_context = ""
     if mcq_payload:
@@ -150,36 +224,23 @@ Feedback: {mcq_payload.get("feedback")}
 Learning Gap: {mcq_payload.get("learning_gap")}
 """
 
-    # 3️⃣ Rebuild GPT messages (ChatGPT-style)
-    gpt_messages = []
-
-    gpt_messages.append({
-        "role": "system",
-        "content": SYSTEM_PROMPT
-    })
+    # 3️⃣ Build GPT messages
+    gpt_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     if mcq_context:
-        gpt_messages.append({
-            "role": "system",
-            "content": mcq_context
-        })
+        gpt_messages.append({"role": "system", "content": mcq_context})
 
     for d in dialogs:
-        role = "assistant" if d["role"] == "assistant" else "user"
         gpt_messages.append({
-            "role": role,
-            "content": (
-                d["content"]
-                if isinstance(d["content"], str)
-                else str(d["content"])
-            )
+            "role": "assistant" if d["role"] == "assistant" else "user",
+            "content": d["content"]
         })
 
+    gpt_messages.append({"role": "user", "content": student_message})
 
-    gpt_messages.append({
-        "role": "user",
-        "content": student_message
-    })
+    logger.info(
+        f"[ASK_PARAGRAPH][GPT] Replaying {len(gpt_messages)} messages"
+    )
 
     # 4️⃣ STREAMING GENERATOR
     def event_generator():
@@ -193,7 +254,20 @@ Learning Gap: {mcq_payload.get("learning_gap")}
                 yield token
 
         finally:
-            # 5️⃣ Persist AFTER stream completes (critical)
+            elapsed = round(time.time() - start_time, 2)
+
+            # 🧠 Semantic block detection
+            last_block = detect_last_block(full_reply)
+
+            logger.info(
+                f"[ASK_PARAGRAPH][GPT_DONE] chars={len(full_reply)} "
+                f"last_block={last_block} time={elapsed}s"
+            )
+
+            tutor_state["last_block"] = last_block
+            tutor_state["turns"] = (tutor_state.get("turns", 0) or 0) + 1
+
+            # 💾 Persist dialogs + tutor_state
             supabase.rpc(
                 "upsert_mcq_session_v11",
                 {
@@ -201,17 +275,36 @@ Learning Gap: {mcq_payload.get("learning_gap")}
                     "p_mcq_id": mcq_id,
                     "p_mcq_payload": {},
                     "p_new_dialogs": [
-                        {
-                            "role": "student",
-                            "content": student_message
-                        },
-                        {
-                            "role": "assistant",
-                            "content": full_reply
-                        }
-                    ]
+                        {"role": "student", "content": student_message},
+                        {"role": "assistant", "content": full_reply},
+                    ],
+                    "p_tutor_state": tutor_state,
                 }
             ).execute()
+
+            logger.info(
+                f"[ASK_PARAGRAPH][DB] Dialogs persisted. turns={tutor_state['turns']}"
+            )
+
+            # 🧠 Build state for suggestions
+            session_for_state = {
+                "dialogs": dialogs + [
+                    {"role": "student", "content": student_message},
+                    {"role": "assistant", "content": full_reply},
+                ],
+                "current_concept": tutor_state.get("concept"),
+            }
+
+            state = extract_state(session_for_state)
+            suggestions = generate_suggestions(state)
+
+            supabase.table("student_mcq_session").update(
+                {"next_suggestions": suggestions}
+            ).eq("student_id", student_id).eq("mcq_id", mcq_id).execute()
+
+            logger.info(
+                f"[ASK_PARAGRAPH][SUGGESTIONS] generated={len(suggestions)}"
+            )
 
     return StreamingResponse(
         event_generator(),
