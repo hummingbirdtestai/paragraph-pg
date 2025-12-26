@@ -308,8 +308,8 @@ Learning Gap: {mcq_payload.get("learning_gap")}
         full_reply = ""
 
         try:
-            from gpt_utils import stream_chat_with_gpt
-            for token in stream_chat_with_gpt(gpt_messages):
+            full_reply = chat_with_gpt(gpt_messages)
+            yield full_reply
                 full_reply += token
                 yield token
         finally:
