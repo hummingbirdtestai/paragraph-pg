@@ -230,10 +230,21 @@ Learning Gap: {mcq_payload.get("learning_gap")}
     if mcq_context:
         gpt_messages.append({"role": "system", "content": mcq_context})
 
+    # 🔧 SURGICAL FIX: do NOT replay system JSON or non-string content
     for d in dialogs:
+        if d.get("role") == "system":
+            continue
+
+        if not isinstance(d.get("content"), str):
+            logger.warning(
+                "[ASK_PARAGRAPH][SKIP] Non-string dialog skipped role=%s",
+                d.get("role"),
+            )
+            continue
+
         gpt_messages.append({
             "role": "assistant" if d["role"] == "assistant" else "user",
-            "content": d["content"]
+            "content": d["content"],
         })
 
     gpt_messages.append({"role": "user", "content": student_message})
@@ -264,16 +275,13 @@ Learning Gap: {mcq_payload.get("learning_gap")}
                 f"last_block={last_block} time={elapsed}s"
             )
 
-            # 🔒 NORMALIZE last_block so session can progress correctly
             if last_block == "[STUDENT_REPLY_REQUIRED]":
                 tutor_state["last_block"] = "[STUDENT_REPLY_REQUIRED]"
             else:
-                # Any other block means mentor has responded → unlock flow
                 tutor_state["last_block"] = last_block
-              
+
             tutor_state["turns"] = (tutor_state.get("turns", 0) or 0) + 1
 
-            # 💾 Persist dialogs + tutor_state
             supabase.rpc(
                 "upsert_mcq_session_v11",
                 {
@@ -292,7 +300,6 @@ Learning Gap: {mcq_payload.get("learning_gap")}
                 f"[ASK_PARAGRAPH][DB] Dialogs persisted. turns={tutor_state['turns']}"
             )
 
-            # 🧠 Build state for suggestions
             session_for_state = {
                 "dialogs": dialogs + [
                     {"role": "student", "content": student_message},
