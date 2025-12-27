@@ -3,7 +3,7 @@
 # ───────────────────────────────────────────────
 
 from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, PlainTextResponse
 import logging
 import time
 
@@ -212,7 +212,7 @@ async def get_session(request: Request):
 
 
 # ───────────────────────────────────────────────
-# CONTINUE CHAT (STUDENT → MENTOR) — STREAMING
+# CONTINUE CHAT (STUDENT → MENTOR)
 # ───────────────────────────────────────────────
 @router.post("/chat")
 async def continue_chat(request: Request):
@@ -283,19 +283,18 @@ Learning Gap: {mcq_payload.get("learning_gap")}
 
     gpt_messages.extend(normalize_dialogs(dialogs))
 
-    # 🔧 SURGICAL CHANGE — ONLY CHANGE IN ENTIRE FILE
     gpt_messages.append({
         "role": "user",
         "content": f"""
-    Student response:
-    \"\"\"{student_message}\"\"\"
-    
-    Decide whether this is:
-    - an MCQ answer (letter or free text), OR
-    - a question.
-    
-    Follow all conversation rules strictly.
-    """
+Student response:
+\"\"\"{student_message}\"\"\"
+
+Decide whether this is:
+- an MCQ answer (letter or free text), OR
+- a question.
+
+Follow all conversation rules strictly.
+"""
     })
 
     logger.info(
@@ -306,38 +305,38 @@ Learning Gap: {mcq_payload.get("learning_gap")}
 
     def event_generator():
         full_reply = ""
-    
+
         try:
             full_reply = chat_with_gpt(gpt_messages)
             yield full_reply
         finally:
             elapsed = round(time.time() - start_time, 2)
-    
+
             prev_block = tutor_state.get("last_block")
             last_block = detect_last_block(full_reply)
-    
+
             if not full_reply.strip():
                 logger.error(
                     "[ASK_PARAGRAPH][GPT_EMPTY_REPLY] last_block=%s student_msg='%s'",
                     prev_block,
                     student_message,
                 )
-    
+
             if last_block != "[STUDENT_REPLY_REQUIRED]":
                 logger.warning(
                     "[ASK_PARAGRAPH][MCQ_LOOP_BREAK] Expected STUDENT_REPLY_REQUIRED, got=%s",
                     last_block,
                 )
-    
+
             logger.info(
                 "[ASK_PARAGRAPH][BLOCK_TRANSITION] %s → %s",
                 prev_block,
                 last_block,
             )
-    
+
             tutor_state["last_block"] = last_block
             tutor_state["turns"] = (tutor_state.get("turns", 0) or 0) + 1
-    
+
             supabase.rpc(
                 "upsert_mcq_session_v11",
                 {
@@ -351,7 +350,7 @@ Learning Gap: {mcq_payload.get("learning_gap")}
                     "p_tutor_state": tutor_state,
                 }
             ).execute()
-    
+
             state = extract_state({
                 "dialogs": dialogs + [
                     {"role": "student", "content": student_message},
@@ -359,20 +358,25 @@ Learning Gap: {mcq_payload.get("learning_gap")}
                 ],
                 "current_concept": tutor_state.get("concept"),
             })
-    
+
             suggestions = generate_suggestions(state)
-    
+
             logger.info(
                 "[ASK_PARAGRAPH][SUGGESTIONS] ids=%s",
                 [s["id"] for s in suggestions],
             )
-    
+
             supabase.table("student_mcq_session").update(
                 {"next_suggestions": suggestions}
             ).eq("student_id", student_id).eq("mcq_id", mcq_id).execute()
 
+    # ────────────────
+    # 🔧 SURGICAL NON-STREAMING EXECUTION
+    # ────────────────
+    generator = event_generator()
+    full_reply = next(generator)
 
-    return StreamingResponse(
-        event_generator(),
+    return PlainTextResponse(
+        full_reply,
         media_type="text/plain"
     )
