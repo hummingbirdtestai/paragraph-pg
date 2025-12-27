@@ -107,6 +107,12 @@ OUTPUT FORMAT RULES:
   [TAKEAWAYS]
 • Do NOT invent new block types.
 • Do NOT write text outside blocks.
+
+TABLE FORMATTING RULES (CRITICAL):
+• When writing tables, use valid GitHub-flavored Markdown.
+• Header row MUST be immediately followed by a separator row using |---|.
+• Do NOT add extra dashed lines, blank rows, or standalone separators.
+• Do NOT break tables across blocks.
 """
 
 # ───────────────────────────────────────────────
