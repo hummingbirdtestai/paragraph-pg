@@ -71,12 +71,11 @@ log("FASTAPI_READY")
 
 # ---------------- HELPERS ----------------
 
-def upload_to_bunny(file_bytes: bytes, filename: str, content_type: str) -> str:
+def upload_to_bunny(file_bytes: bytes, filename: str) -> str:
     upload_url = f"{BUNNY_STORAGE_BASE}/{filename}"
 
     log("BUNNY_UPLOAD_START", {
         "filename": filename,
-        "content_type": content_type,
         "size_bytes": len(file_bytes),
         "upload_url": upload_url,
     })
@@ -85,7 +84,6 @@ def upload_to_bunny(file_bytes: bytes, filename: str, content_type: str) -> str:
         upload_url,
         headers={
             "AccessKey": BUNNY_API_KEY,
-            "Content-Type": content_type,
         },
         data=file_bytes,
         timeout=30,
@@ -156,14 +154,12 @@ async def upload_image_to_bunny(
     })
 
     try:
-        # Read image
         contents = await file.read()
 
         log("FILE_READ", {
             "bytes": len(contents),
         })
 
-        # Determine extension safely
         ext = file.filename.split(".")[-1].lower()
         log("FILE_EXTENSION", ext)
 
@@ -174,14 +170,11 @@ async def upload_image_to_bunny(
         filename = f"{row_id}.{ext}"
         log("FINAL_FILENAME", filename)
 
-        # Upload to Bunny
         bunny_url = upload_to_bunny(
             contents,
             filename,
-            file.content_type or "image/jpeg"
         )
 
-        # Update Supabase
         update_supabase(row_id, bunny_url)
 
         log("REQUEST_SUCCESS", {
