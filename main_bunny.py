@@ -6,10 +6,20 @@ import requests
 import os
 from supabase import create_client
 from dotenv import load_dotenv
+from datetime import datetime
 
 load_dotenv()
 
+def log(tag: str, data=None):
+    ts = datetime.utcnow().isoformat()
+    if data is not None:
+        print(f"[{ts}][BUNNY_API][{tag}]", data, flush=True)
+    else:
+        print(f"[{ts}][BUNNY_API][{tag}]", flush=True)
+
 # ---------------- CONFIG ----------------
+
+log("BOOT_START")
 
 BUNNY_STORAGE_ZONE = os.getenv("BUNNY_STORAGE_ZONE")
 BUNNY_API_KEY = os.getenv("BUNNY_STORAGE_API_KEY")
@@ -18,6 +28,14 @@ BUNNY_PULL_ZONE = os.getenv("BUNNY_PULL_ZONE")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
+log("ENV_LOADED", {
+    "BUNNY_STORAGE_ZONE": bool(BUNNY_STORAGE_ZONE),
+    "BUNNY_API_KEY": bool(BUNNY_API_KEY),
+    "BUNNY_PULL_ZONE": bool(BUNNY_PULL_ZONE),
+    "SUPABASE_URL": bool(SUPABASE_URL),
+    "SUPABASE_SERVICE_KEY": bool(SUPABASE_SERVICE_KEY),
+})
+
 if not all([
     BUNNY_STORAGE_ZONE,
     BUNNY_API_KEY,
@@ -25,11 +43,17 @@ if not all([
     SUPABASE_URL,
     SUPABASE_SERVICE_KEY
 ]):
+    log("ENV_MISSING_FATAL")
     raise RuntimeError("Missing required environment variables")
 
 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
 BUNNY_STORAGE_BASE = f"https://storage.bunnycdn.com/{BUNNY_STORAGE_ZONE}"
+
+log("BOOT_COMPLETE", {
+    "BUNNY_STORAGE_BASE": BUNNY_STORAGE_BASE,
+    "BUNNY_PULL_ZONE": BUNNY_PULL_ZONE,
+})
 
 # ---------------- APP ----------------
 
@@ -43,10 +67,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+log("FASTAPI_READY")
+
 # ---------------- HELPERS ----------------
 
 def upload_to_bunny(file_bytes: bytes, filename: str, content_type: str) -> str:
     upload_url = f"{BUNNY_STORAGE_BASE}/{filename}"
+
+    log("BUNNY_UPLOAD_START", {
+        "filename": filename,
+        "content_type": content_type,
+        "size_bytes": len(file_bytes),
+        "upload_url": upload_url,
+    })
 
     r = requests.put(
         upload_url,
@@ -58,12 +91,28 @@ def upload_to_bunny(file_bytes: bytes, filename: str, content_type: str) -> str:
         timeout=30,
     )
 
+    log("BUNNY_UPLOAD_RESPONSE", {
+        "status_code": r.status_code,
+        "reason": r.reason,
+    })
+
     if r.status_code not in (200, 201):
+        log("BUNNY_UPLOAD_FAILED", r.text)
         raise RuntimeError(f"Bunny upload failed: {r.status_code}")
 
-    return f"{BUNNY_PULL_ZONE}/{filename}"
+    bunny_url = f"{BUNNY_PULL_ZONE}/{filename}"
+
+    log("BUNNY_UPLOAD_SUCCESS", bunny_url)
+
+    return bunny_url
+
 
 def update_supabase(row_id: str, bunny_url: str):
+    log("SUPABASE_UPDATE_START", {
+        "row_id": row_id,
+        "bunny_url": bunny_url,
+    })
+
     res = (
         supabase
         .table("image_concept_phase_final")
@@ -72,8 +121,16 @@ def update_supabase(row_id: str, bunny_url: str):
         .execute()
     )
 
+    log("SUPABASE_UPDATE_RESPONSE", {
+        "data": res.data,
+        "count": len(res.data) if res.data else 0,
+    })
+
     if not res.data:
+        log("SUPABASE_UPDATE_FAILED")
         raise RuntimeError("Supabase update failed")
+
+    log("SUPABASE_UPDATE_SUCCESS", row_id)
 
 # ---------------- ENDPOINT ----------------
 
@@ -92,16 +149,30 @@ async def upload_image_to_bunny(
     - stores Bunny URL in supabase_image_url
     """
 
+    log("REQUEST_RECEIVED", {
+        "row_id": row_id,
+        "filename": file.filename,
+        "content_type": file.content_type,
+    })
+
     try:
         # Read image
         contents = await file.read()
 
+        log("FILE_READ", {
+            "bytes": len(contents),
+        })
+
         # Determine extension safely
         ext = file.filename.split(".")[-1].lower()
+        log("FILE_EXTENSION", ext)
+
         if ext not in ["jpg", "jpeg", "png", "webp"]:
+            log("UNSUPPORTED_FILE_TYPE", ext)
             raise HTTPException(status_code=400, detail="Unsupported image type")
 
         filename = f"{row_id}.{ext}"
+        log("FINAL_FILENAME", filename)
 
         # Upload to Bunny
         bunny_url = upload_to_bunny(
@@ -113,12 +184,20 @@ async def upload_image_to_bunny(
         # Update Supabase
         update_supabase(row_id, bunny_url)
 
+        log("REQUEST_SUCCESS", {
+            "row_id": row_id,
+            "bunny_url": bunny_url,
+        })
+
         return {
             "status": "ok",
             "url": bunny_url
         }
 
-    except HTTPException:
+    except HTTPException as e:
+        log("HTTP_EXCEPTION", str(e.detail))
         raise
+
     except Exception as e:
+        log("UNHANDLED_EXCEPTION", str(e))
         raise HTTPException(status_code=500, detail=str(e))
