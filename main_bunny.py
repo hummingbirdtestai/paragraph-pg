@@ -48,7 +48,7 @@ if not all([
 
 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
-BUNNY_STORAGE_BASE = f"https://storage.bunnycdn.com/{BUNNY_STORAGE_ZONE}"
+BUNNY_STORAGE_BASE = f"https://sg.storage.bunnycdn.com/{BUNNY_STORAGE_ZONE}"
 
 log("BOOT_COMPLETE", {
     "BUNNY_STORAGE_BASE": BUNNY_STORAGE_BASE,
