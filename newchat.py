@@ -290,7 +290,7 @@ def is_mcq_answer(text: str) -> bool:
 # CONTINUE CHAT (STUDENT → MENTOR)
 # ───────────────────────────────────────────────
 # ───────────────────────────────────────────────
-# CONTINUE CHAT (STUDENT → MENTOR) — PROD SAFE
+# CONTINUE CHAT (STUDENT → MENTOR) — FE SAFE
 # ───────────────────────────────────────────────
 @router.post("/chat")
 async def continue_chat(request: Request):
@@ -315,48 +315,45 @@ async def continue_chat(request: Request):
     dialogs = row.data["dialogs"] or []
     tutor_state = row.data["tutor_state"] or {}
 
-    def event_generator():
-        # ✅ reply MUST be defined before try
+    # ─────────────────────────────────────────
+    # 🔒 ALL HEAVY WORK BEFORE STREAM
+    # ─────────────────────────────────────────
+    try:
+        reply = chat_with_gpt([
+            {"role": "system", "content": SYSTEM_PROMPT},
+            *get_active_mcq_context(dialogs),
+            {
+                "role": "user",
+                "content": student_message
+            }
+        ])
+    except Exception:
+        logger.exception("[ASK_PARAGRAPH][CHAT] GPT failure")
         reply = "[MENTOR]\nTemporary issue. Please retry."
 
-        try:
-            reply = chat_with_gpt([
-                {"role": "system", "content": SYSTEM_PROMPT},
-                *get_active_mcq_context(dialogs),
-                {
-                    "role": "user",
-                    "content": student_message
-                }
-            ])
+    # Update state BEFORE streaming
+    tutor_state["turns"] = (tutor_state.get("turns") or 0) + 1
 
-            # 🔥 SINGLE YIELD — STREAM ENDS
-            yield reply
+    supabase.rpc(
+        "upsert_mcq_session_v11",
+        {
+            "p_student_id": student_id,
+            "p_mcq_id": mcq_id,
+            "p_mcq_payload": {},
+            "p_new_dialogs": [
+                {"role": "student", "content": student_message},
+                {"role": "assistant", "content": reply},
+            ],
+            "p_tutor_state": tutor_state,
+        }
+    ).execute()
 
-        except Exception:
-            logger.exception("[ASK_PARAGRAPH][CHAT] GPT failure")
-            yield reply
-
-        # ─────────────────────────────────────
-        # ✅ STATE UPDATE (CRITICAL FIX)
-        # ─────────────────────────────────────
-        tutor_state["turns"] = (tutor_state.get("turns") or 0) + 1
-
-        # Persist conversation + state
-        supabase.rpc(
-            "upsert_mcq_session_v11",
-            {
-                "p_student_id": student_id,
-                "p_mcq_id": mcq_id,
-                "p_mcq_payload": {},
-                "p_new_dialogs": [
-                    {"role": "student", "content": student_message},
-                    {"role": "assistant", "content": reply},
-                ],
-                "p_tutor_state": tutor_state,
-            }
-        ).execute()
-
-        # 🔒 FUNCTION ENDS — NO MORE YIELDS
+    # ─────────────────────────────────────────
+    # 🔥 PURE SINGLE-YIELD GENERATOR
+    # ─────────────────────────────────────────
+    def event_generator():
+        yield reply
+        return  # ⛔ hard stop → stream CLOSES
 
     return StreamingResponse(
         event_generator(),
