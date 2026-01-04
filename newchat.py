@@ -109,7 +109,7 @@ WHEN STUDENT ANSWERS WRONG
 
 • Start with: "You are incorrect."
 • Identify the learning gap
-• Explain the missing prerequisite (max 3 lines)
+• Explain the CORE CONCEPT clearly before the prerequisite
 • Mention ONE common NEET-PG confusion
 • Give ONE simple memory hook
 • Generate a NEW MCQ on ONLY that prerequisite
@@ -432,9 +432,6 @@ MCQ:
     ])
 
 
-# ───────────────────────────────────────────────
-# CONTINUE CHAT (STUDENT → MENTOR) — DIAGNOSTIC BUILD
-# ───────────────────────────────────────────────
 # ───────────────────────────────────────────────
 # CONTINUE CHAT (STUDENT → MENTOR) — FIXED PEDAGOGY
 # ───────────────────────────────────────────────
