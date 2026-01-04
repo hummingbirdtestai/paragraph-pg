@@ -3,7 +3,7 @@
 # ───────────────────────────────────────────────
 
 from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import StreamingResponse, PlainTextResponse
+from fastapi.responses import StreamingResponse
 import logging
 import time
 
@@ -59,19 +59,6 @@ def normalize_dialogs(dialogs):
         )
 
     return safe
-
-def build_fast_system_context(concept_index: int, recursion_depth: int) -> str:
-    """
-    Minimal deterministic system context for speed & obedience.
-    """
-    return f"""
-TEACHING STATE (STRICT):
-- Current concept: {concept_index} / 3
-- Recursion depth: {recursion_depth}
-- Do NOT introduce new concepts.
-- Ask MCQs ONLY.
-- Drill down if wrong, advance only if correct.
-"""
 
 
 # ───────────────────────────────────────────────
@@ -432,16 +419,16 @@ Feedback: {mcq_payload.get("feedback")}
 Learning Gap: {mcq_payload.get("learning_gap")}
 """
 
-    gpt_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-
-    gpt_messages.append({
-        "role": "system",
-        "content": build_fast_system_context(concept_index, recursion_depth)
-    })
+    gpt_messages = [
+        {"role": "system", "content": SYSTEM_PROMPT}
+    ]
     
     if mcq_context:
-        gpt_messages.append({"role": "system", "content": mcq_context})
-
+        gpt_messages.append({
+            "role": "user",
+            "content": mcq_context
+        })
+    
     gpt_messages.extend(get_active_mcq_context(dialogs))
 
     gpt_messages.append({
@@ -468,14 +455,10 @@ Follow all conversation rules strictly.
         full_reply = ""
     
         try:
-            # ⚡ Instant kick-start
-            yield (
-                "[MENTOR]\n"
-                "Analyzing your response and identifying the exact concept gap…\n\n"
-            )
-    
+
             full_reply = chat_with_gpt(gpt_messages)
             yield full_reply
+
     
         finally:
             if not full_reply:
@@ -488,14 +471,15 @@ Follow all conversation rules strictly.
                 tutor_state["recursion_depth"] = 0
     
             if last_block == "[FEEDBACK_CORRECT]":
-                tutor_state["recursion_depth"] = 0
                 tutor_state["concept_index"] = min(
                     tutor_state.get("concept_index", 1) + 1,
                     3
                 )
-    
+                tutor_state["recursion_depth"] = 0
+            
             elif last_block == "[FEEDBACK_WRONG]":
                 tutor_state["recursion_depth"] += 1
+
     
             tutor_state["last_block"] = last_block
             tutor_state["turns"] = (tutor_state.get("turns", 0) or 0) + 1
