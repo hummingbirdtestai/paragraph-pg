@@ -251,6 +251,16 @@ Begin the discussion.
         }
     ])
 
+    # ⬇️ ADD HERE — initialize teaching state
+    initial_tutor_state = {
+        "phase": "mcq_teaching",
+        "concept_index": 1,
+        "recursion_depth": 0,
+        "concept_mastered": False,
+        "turns": 0,
+        "last_block": "[STUDENT_REPLY_REQUIRED]"
+    }
+
     logger.info(
         f"[ASK_PARAGRAPH][START] Initial mentor reply generated "
         f"(chars={len(mentor_reply)})"
@@ -268,7 +278,8 @@ Begin the discussion.
                     "content": mentor_reply,
                     "mcq_payload": mcq_payload
                 }
-            ]
+            ],
+            "p_tutor_state": initial_tutor_state
         }
     ).execute()
 
@@ -381,6 +392,8 @@ async def continue_chat(request: Request):
 
     dialogs = row.data["dialogs"]
     tutor_state = row.data["tutor_state"] or {}
+    concept_index = tutor_state.get("concept_index", 1)
+    recursion_depth = tutor_state.get("recursion_depth", 0)
 
     if tutor_state.get("last_block") == "[STUDENT_REPLY_REQUIRED]":
         if not student_message or not student_message.strip():
@@ -407,6 +420,19 @@ Learning Gap: {mcq_payload.get("learning_gap")}
 """
 
     gpt_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+    gpt_messages.append({
+        "role": "system",
+        "content": f"""
+    TEACHING STATE (NON-NEGOTIABLE):
+    - You are currently teaching Concept {concept_index} of 3.
+    - You MUST NOT exceed Concept 3.
+    - You MUST complete Concept {concept_index} fully before moving forward.
+    - Current recursion depth = {recursion_depth}.
+    - If recursion_depth > 5, force mastery with clarification + final MCQ.
+    - After mastery, you MUST produce a flow-style summary of mistakes before moving to next concept.
+    """
+    })
 
     if mcq_context:
         gpt_messages.append({"role": "system", "content": mcq_context})
@@ -445,6 +471,19 @@ Follow all conversation rules strictly.
             prev_block = tutor_state.get("last_block")
             last_block = detect_last_block(full_reply)
 
+            # ⬇️ Concept mastery detection
+            if last_block == "[FEEDBACK_CORRECT]":
+                tutor_state["concept_mastered"] = True
+                tutor_state["recursion_depth"] = 0
+            
+                if tutor_state.get("concept_index", 1) < 3:
+                    tutor_state["concept_index"] += 1
+                    tutor_state["concept_mastered"] = False
+            
+            elif last_block == "[FEEDBACK_WRONG]":
+                tutor_state["recursion_depth"] = tutor_state.get("recursion_depth", 0) + 1
+
+            
             if not full_reply.strip():
                 logger.error(
                     "[ASK_PARAGRAPH][GPT_EMPTY_REPLY] last_block=%s student_msg='%s'",
@@ -452,11 +491,16 @@ Follow all conversation rules strictly.
                     student_message,
                 )
 
-            if last_block != "[STUDENT_REPLY_REQUIRED]":
+            if last_block not in {
+                "[STUDENT_REPLY_REQUIRED]",
+                "[FEEDBACK_CORRECT]",
+                "[FEEDBACK_WRONG]"
+            }:
                 logger.warning(
-                    "[ASK_PARAGRAPH][MCQ_LOOP_BREAK] Expected STUDENT_REPLY_REQUIRED, got=%s",
+                    "[ASK_PARAGRAPH][UNEXPECTED_BLOCK] got=%s",
                     last_block,
                 )
+
 
             logger.info(
                 "[ASK_PARAGRAPH][BLOCK_TRANSITION] %s → %s",
@@ -486,7 +530,7 @@ Follow all conversation rules strictly.
                     {"role": "student", "content": student_message},
                     {"role": "assistant", "content": full_reply},
                 ],
-                "current_concept": tutor_state.get("concept"),
+                "current_concept": tutor_state.get("concept_index"),
             })
 
             suggestions = generate_suggestions(state)
