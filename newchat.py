@@ -289,6 +289,9 @@ def is_mcq_answer(text: str) -> bool:
 # ───────────────────────────────────────────────
 # CONTINUE CHAT (STUDENT → MENTOR)
 # ───────────────────────────────────────────────
+# ───────────────────────────────────────────────
+# CONTINUE CHAT (STUDENT → MENTOR) — PROD SAFE
+# ───────────────────────────────────────────────
 @router.post("/chat")
 async def continue_chat(request: Request):
     data = await request.json()
@@ -309,126 +312,53 @@ async def continue_chat(request: Request):
     if not row.data:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    dialogs = row.data["dialogs"]
-    tutor_state = row.data["tutor_state"]
-
-    if not tutor_state or not tutor_state.get("current_mcq"):
-        raise HTTPException(
-            status_code=500,
-            detail="Invalid tutor state: missing current_mcq"
-        )
-
-    current_mcq = tutor_state["current_mcq"]
-    awaiting_answer = tutor_state.get("awaiting_answer", True)
-    recursion_depth = tutor_state.get("recursion_depth", 0)
-    max_depth = tutor_state.get("max_depth", 10)
+    dialogs = row.data["dialogs"] or []
+    tutor_state = row.data["tutor_state"] or {}
 
     def event_generator():
-        full_reply = ""
+        # ✅ reply MUST be defined before try
+        reply = "[MENTOR]\nTemporary issue. Please retry."
 
         try:
-            student_is_answering = is_mcq_answer(student_message)
-
-            # ───────────────────────────────
-            # CASE 1: STUDENT ASKED QUESTION
-            # ───────────────────────────────
-            if awaiting_answer and not student_is_answering:
-                full_reply = chat_with_gpt([
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {
-                        "role": "user",
-                        "content": f"""
-Student asked:
-\"\"\"{student_message}\"\"\"
-
-Answer briefly.
-
-Re-ask this MCQ EXACTLY:
-
-[MCQ]
-Question: {current_mcq["question"]}
-A. {current_mcq["options"][0]}
-B. {current_mcq["options"][1]}
-C. {current_mcq["options"][2]}
-D. {current_mcq["options"][3]}
-
-End with [STUDENT_REPLY_REQUIRED].
-"""
-                    }
-                ])
-
-            # ───────────────────────────────
-            # CASE 2: STUDENT ANSWERED
-            # ───────────────────────────────
-            else:
-                normalized = student_message.strip().upper()
-
-                if normalized.endswith(current_mcq["correct_answer"]):
-                    tutor_state["status"] = "completed"
-                    tutor_state["awaiting_answer"] = False
-                    full_reply = "[FEEDBACK_CORRECT]"
-
-                else:
-                    recursion_depth += 1
-                    tutor_state["recursion_depth"] = recursion_depth
-
-                    if recursion_depth >= max_depth:
-                        tutor_state["status"] = "completed"
-                        tutor_state["awaiting_answer"] = False
-                        full_reply = "[MENTOR]\nPause and revise this concept again."
-
-                    else:
-                        full_reply = chat_with_gpt([
-                            {"role": "system", "content": SYSTEM_PROMPT},
-                            {
-                                "role": "user",
-                                "content": f"""
-Student answered incorrectly:
-\"\"\"{student_message}\"\"\"
-
-Explain the learning gap and generate a NEW MCQ.
-Use exact MCQ format.
-End with [STUDENT_REPLY_REQUIRED].
-"""
-                            }
-                        ])
-
-                        parsed = parse_mcq_from_text(full_reply)
-                        if parsed:
-                            tutor_state["current_mcq"] = {
-                                "id": f"recursion_{recursion_depth}",
-                                "question": parsed["question"],
-                                "options": parsed["options"],
-                                "correct_answer": parsed["correct_answer"]
-                            }
-
-            tutor_state["turns"] = tutor_state.get("turns", 0) + 1
-
-            supabase.rpc(
-                "upsert_mcq_session_v11",
+            reply = chat_with_gpt([
+                {"role": "system", "content": SYSTEM_PROMPT},
+                *get_active_mcq_context(dialogs),
                 {
-                    "p_student_id": student_id,
-                    "p_mcq_id": mcq_id,
-                    "p_mcq_payload": {},
-                    "p_new_dialogs": [
-                        {"role": "student", "content": student_message},
-                        {"role": "assistant", "content": full_reply},
-                    ],
-                    "p_tutor_state": tutor_state,
+                    "role": "user",
+                    "content": student_message
                 }
-            ).execute()
+            ])
 
-            yield full_reply
+            # 🔥 SINGLE YIELD — STREAM ENDS
+            yield reply
 
-        except Exception as e:
-            logger.exception("Chat failure")
-            yield "[MENTOR]\nTemporary issue. Please retry."
+        except Exception:
+            logger.exception("[ASK_PARAGRAPH][CHAT] GPT failure")
+            yield reply
+
+        # ─────────────────────────────────────
+        # ✅ STATE UPDATE (CRITICAL FIX)
+        # ─────────────────────────────────────
+        tutor_state["turns"] = (tutor_state.get("turns") or 0) + 1
+
+        # Persist conversation + state
+        supabase.rpc(
+            "upsert_mcq_session_v11",
+            {
+                "p_student_id": student_id,
+                "p_mcq_id": mcq_id,
+                "p_mcq_payload": {},
+                "p_new_dialogs": [
+                    {"role": "student", "content": student_message},
+                    {"role": "assistant", "content": reply},
+                ],
+                "p_tutor_state": tutor_state,
+            }
+        ).execute()
+
+        # 🔒 FUNCTION ENDS — NO MORE YIELDS
 
     return StreamingResponse(
         event_generator(),
         media_type="text/plain"
     )
-
-
-
-
