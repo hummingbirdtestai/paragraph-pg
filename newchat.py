@@ -221,7 +221,8 @@ End with [STUDENT_REPLY_REQUIRED].
         }
     ).execute()
 
-    return {"status": "started"}
+    return rpc.data[0]
+
 
 # ───────────────────────────────────────────────
 # 🔥 LOAD EXISTING SESSION
