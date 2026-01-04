@@ -312,9 +312,6 @@ async def continue_chat(request: Request):
     dialogs = row.data["dialogs"]
     tutor_state = row.data["tutor_state"]
 
-    # ─────────────────────────────────────────
-    # HARD STATE GUARDS (FIX #2)
-    # ─────────────────────────────────────────
     if not tutor_state or not tutor_state.get("current_mcq"):
         raise HTTPException(
             status_code=500,
@@ -326,17 +323,21 @@ async def continue_chat(request: Request):
     recursion_depth = tutor_state.get("recursion_depth", 0)
     max_depth = tutor_state.get("max_depth", 10)
 
-    student_is_answering = is_mcq_answer(student_message)
+    def event_generator():
+        full_reply = ""
 
-    # ─────────────────────────────────────────
-    # CASE 1: STUDENT ASKED A QUESTION
-    # ─────────────────────────────────────────
-    if awaiting_answer and not student_is_answering:
-        full_reply = chat_with_gpt([
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": f"""
+        try:
+            student_is_answering = is_mcq_answer(student_message)
+
+            # ───────────────────────────────
+            # CASE 1: STUDENT ASKED QUESTION
+            # ───────────────────────────────
+            if awaiting_answer and not student_is_answering:
+                full_reply = chat_with_gpt([
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": f"""
 Student asked:
 \"\"\"{student_message}\"\"\"
 
@@ -353,53 +354,35 @@ D. {current_mcq["options"][3]}
 
 End with [STUDENT_REPLY_REQUIRED].
 """
-            }
-        ])
+                    }
+                ])
 
-        # ─────────────────────────────────────
-        # ENFORCE MCQ ANCHOR (FIX #4)
-        # ─────────────────────────────────────
-        if "[STUDENT_REPLY_REQUIRED]" not in full_reply:
-            raise HTTPException(
-                status_code=500,
-                detail="GPT violated MCQ anchor rule"
-            )
-
-    # ─────────────────────────────────────────
-    # CASE 2: STUDENT ANSWERED MCQ
-    # ─────────────────────────────────────────
-    else:
-        normalized_answer = student_message.strip().upper()
-
-        # ─────────────────────────────────────
-        # CORRECT ANSWER (FIX #3)
-        # ─────────────────────────────────────
-        if (
-            is_mcq_answer(student_message)
-            and normalized_answer.endswith(current_mcq["correct_answer"])
-        ):
-            tutor_state["status"] = "completed"
-            tutor_state["awaiting_answer"] = False
-            full_reply = "[FEEDBACK_CORRECT]"
-
-        # ─────────────────────────────────────
-        # WRONG ANSWER → RECURSION
-        # ─────────────────────────────────────
-        else:
-            recursion_depth += 1
-            tutor_state["recursion_depth"] = recursion_depth
-
-            if recursion_depth >= max_depth:
-                tutor_state["status"] = "completed"
-                tutor_state["awaiting_answer"] = False
-                full_reply = "[MENTOR]\nPause and revise this concept again."
-
+            # ───────────────────────────────
+            # CASE 2: STUDENT ANSWERED
+            # ───────────────────────────────
             else:
-                gpt_reply = chat_with_gpt([
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {
-                        "role": "user",
-                        "content": f"""
+                normalized = student_message.strip().upper()
+
+                if normalized.endswith(current_mcq["correct_answer"]):
+                    tutor_state["status"] = "completed"
+                    tutor_state["awaiting_answer"] = False
+                    full_reply = "[FEEDBACK_CORRECT]"
+
+                else:
+                    recursion_depth += 1
+                    tutor_state["recursion_depth"] = recursion_depth
+
+                    if recursion_depth >= max_depth:
+                        tutor_state["status"] = "completed"
+                        tutor_state["awaiting_answer"] = False
+                        full_reply = "[MENTOR]\nPause and revise this concept again."
+
+                    else:
+                        full_reply = chat_with_gpt([
+                            {"role": "system", "content": SYSTEM_PROMPT},
+                            {
+                                "role": "user",
+                                "content": f"""
 Student answered incorrectly:
 \"\"\"{student_message}\"\"\"
 
@@ -407,46 +390,45 @@ Explain the learning gap and generate a NEW MCQ.
 Use exact MCQ format.
 End with [STUDENT_REPLY_REQUIRED].
 """
-                    }
-                ])
+                            }
+                        ])
 
-                parsed = parse_mcq_from_text(gpt_reply)
-                if not parsed:
-                    raise HTTPException(
-                        status_code=500,
-                        detail="Failed to parse new MCQ"
-                    )
+                        parsed = parse_mcq_from_text(full_reply)
+                        if parsed:
+                            tutor_state["current_mcq"] = {
+                                "id": f"recursion_{recursion_depth}",
+                                "question": parsed["question"],
+                                "options": parsed["options"],
+                                "correct_answer": parsed["correct_answer"]
+                            }
 
-                tutor_state["current_mcq"] = {
-                    "id": f"recursion_{recursion_depth}",
-                    "question": parsed["question"],
-                    "options": parsed["options"],
-                    "correct_answer": parsed["correct_answer"]
+            tutor_state["turns"] = tutor_state.get("turns", 0) + 1
+
+            supabase.rpc(
+                "upsert_mcq_session_v11",
+                {
+                    "p_student_id": student_id,
+                    "p_mcq_id": mcq_id,
+                    "p_mcq_payload": {},
+                    "p_new_dialogs": [
+                        {"role": "student", "content": student_message},
+                        {"role": "assistant", "content": full_reply},
+                    ],
+                    "p_tutor_state": tutor_state,
                 }
+            ).execute()
 
-                tutor_state["awaiting_answer"] = True
-                full_reply = gpt_reply
+            yield full_reply
 
-    # ─────────────────────────────────────────
-    # FINAL STATE UPDATE
-    # ─────────────────────────────────────────
-    tutor_state["turns"] = tutor_state.get("turns", 0) + 1
+        except Exception as e:
+            logger.exception("Chat failure")
+            yield "[MENTOR]\nTemporary issue. Please retry."
 
-    supabase.rpc(
-        "upsert_mcq_session_v11",
-        {
-            "p_student_id": student_id,
-            "p_mcq_id": mcq_id,
-            "p_mcq_payload": {},
-            "p_new_dialogs": [
-                {"role": "student", "content": student_message},
-                {"role": "assistant", "content": full_reply},
-            ],
-            "p_tutor_state": tutor_state,
-        }
-    ).execute()
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/plain"
+    )
 
-    return StreamingResponse(iter([full_reply]), media_type="text/plain")
 
 
 
