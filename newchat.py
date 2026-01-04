@@ -392,6 +392,9 @@ Generate reinforcement.
 # ───────────────────────────────────────────────
 # CONTINUE CHAT (STUDENT → MENTOR) — DIAGNOSTIC BUILD
 # ───────────────────────────────────────────────
+# ───────────────────────────────────────────────
+# CONTINUE CHAT (STUDENT → MENTOR) — FIXED PEDAGOGY
+# ───────────────────────────────────────────────
 @router.post("/chat")
 async def continue_chat(request: Request):
     data = await request.json()
@@ -400,6 +403,9 @@ async def continue_chat(request: Request):
     mcq_id = data["mcq_id"]
     message = data.get("message", "").strip()
 
+    # ─────────────────────────────────────────
+    # LOAD SESSION
+    # ─────────────────────────────────────────
     row = (
         supabase.table("student_mcq_session")
         .select("dialogs, tutor_state")
@@ -428,20 +434,26 @@ async def continue_chat(request: Request):
 
     # 🛑 STOP AFTER MASTERY
     if tutor_state.get("status") == "mastered":
-        return StreamingResponse(iter(["[SESSION_COMPLETED]"]), media_type="text/plain")
+        return StreamingResponse(
+            iter(["[SESSION_COMPLETED]"]),
+            media_type="text/plain"
+        )
 
-    # 🛑 MAX DEPTH SAFETY
+    # 🛑 SAFETY: MAX DEPTH
     if tutor_state["recursion_depth"] >= tutor_state["max_depth"]:
         final = (
             "You are incorrect.\n"
-            "[GAP]: Core foundation missing\n"
-            "[EXPLANATION]: This topic needs revision from basics.\n"
-            "[COMMON_CONFUSION]: Superficial pattern matching without understanding.\n"
-            "[MEMORY_HOOK]: Revise standard textbook definitions.\n"
+            "[CORE_CONCEPT]: This topic requires revision from first principles.\n"
+            "[GAP]: Foundational understanding missing.\n"
+            "[COMMON_CONFUSION]: Pattern recognition without concept clarity.\n"
+            "[MEMORY_HOOK]: Definition before application.\n"
             "[SUB_CONCEPT]: Fundamental principles"
         )
         return StreamingResponse(iter([final]), media_type="text/plain")
 
+    # ─────────────────────────────────────────
+    # DETERMINE MESSAGE TYPE
+    # ─────────────────────────────────────────
     is_answer = is_mcq_answer(message)
 
     # 🟡 STUDENT ASKED A QUESTION
@@ -462,6 +474,7 @@ End with [STUDENT_REPLY_REQUIRED].
 """
             }
         ])
+
         final_reply = reply
 
     # 🔵 STUDENT ANSWERED
@@ -469,51 +482,99 @@ End with [STUDENT_REPLY_REQUIRED].
         student_ans = message.strip().upper()[:1]
         correct_ans = current_mcq["correct_answer"].upper()
 
-        # ✅ CORRECT
+        # ✅ CORRECT ANSWER (BACKEND DECIDES)
         if student_ans == correct_ans:
             tutor_state["status"] = "mastered"
             reinforcement = generate_reinforcement(current_mcq)
             final_reply = "[FEEDBACK_CORRECT]\n\n" + reinforcement
 
-        # ❌ WRONG → DIAGNOSTIC
+        # ❌ WRONG ANSWER — FIXED PEDAGOGY
         else:
             tutor_state["recursion_depth"] += 1
 
+            # ✅ BACKEND-CONTROLLED INTRO (ONCE ONLY)
+            intro = (
+                "You are incorrect.\n"
+                f"The correct answer is {correct_ans}.\n\n"
+            )
+
             reply = chat_with_gpt([
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {
+                    "role": "system",
+                    "content": """
+You are a senior NEET-PG mentor.
+
+The student answered an MCQ incorrectly.
+
+Your job is TEACHING FIRST, DIAGNOSIS SECOND.
+
+━━━━━━━━━━━━━━━━━━━━━━
+STRICT ORDER (MANDATORY)
+━━━━━━━━━━━━━━━━━━━━━━
+
+1. Explain the CORE CONCEPT in detail (5–8 lines, exam-oriented)
+2. Explain WHY the student made this mistake
+3. Identify the specific missing prerequisite
+4. Give ONE memory hook
+5. Generate ONE simpler MCQ on that missing prerequisite
+6. End with [STUDENT_REPLY_REQUIRED]
+
+━━━━━━━━━━━━━━━━━━━━━━
+FORMAT (STRICT)
+━━━━━━━━━━━━━━━━━━━━━━
+
+[CORE_CONCEPT]:
+<detailed explanation>
+
+[GAP]:
+<what exactly is missing>
+
+[COMMON_CONFUSION]:
+<why students mix this up>
+
+[MEMORY_HOOK]:
+<short hook>
+
+[SUB_CONCEPT]:
+<name>
+
+[MCQ]
+Question: <text>
+A. <option>
+B. <option>
+C. <option>
+D. <option>
+Correct: <A|B|C|D>
+
+━━━━━━━━━━━━━━━━━━━━━━
+RULES
+━━━━━━━━━━━━━━━━━━━━━━
+
+• Do NOT repeat “You are incorrect”
+• Do NOT reveal the correct answer
+• Do NOT mention recursion or pedagogy
+• Plain text only
+"""
+                },
                 *get_active_mcq_context(dialogs),
                 {
                     "role": "user",
                     "content": f"""
-The student answered incorrectly.
-
 Student answer: {student_ans}
 Correct answer: {correct_ans}
 
-Follow diagnostic rules strictly.
-End with [STUDENT_REPLY_REQUIRED].
+Teach properly, then diagnose, then ask next MCQ.
 """
                 }
             ])
 
-            # 🔒 TAG ENFORCEMENT
-            for tag in [
-                "[GAP]:",
-                "[EXPLANATION]:",
-                "[COMMON_CONFUSION]:",
-                "[MEMORY_HOOK]:",
-                "[SUB_CONCEPT]:"
-            ]:
-                if tag not in reply:
-                    reply += f"\n{tag} Not specified"
-
             parsed = parse_mcq_from_text(reply)
+
             if not parsed:
-                final_reply = (
-                    "You are incorrect.\n"
-                    "[GAP]: Conceptual misunderstanding\n"
-                    "[EXPLANATION]: Please revise this prerequisite.\n"
-                    "[COMMON_CONFUSION]: Mixing similar terms.\n"
+                final_reply = intro + (
+                    "[CORE_CONCEPT]: Revise the fundamental concept carefully.\n"
+                    "[GAP]: Conceptual misunderstanding.\n"
+                    "[COMMON_CONFUSION]: Similar terms confused.\n"
                     "[MEMORY_HOOK]: One concept → one definition.\n"
                     "[SUB_CONCEPT]: Foundational concept"
                 )
@@ -522,11 +583,9 @@ End with [STUDENT_REPLY_REQUIRED].
                 new_q = normalize_question(parsed["question"])
                 for old in tutor_state["mcq_history"]:
                     if normalize_question(old["question"]) == new_q:
-                       # Instead of raising
                         tutor_state["recursion_depth"] += 1
                         tutor_state["active_gap"] = f"deeper prerequisite of {tutor_state['active_gap']}"
                         tutor_state["active_concept"] = f"sub-concept of {tutor_state['active_concept']}"
-                        
                         return StreamingResponse(
                             iter(["[SYSTEM_RETRY]"]),
                             media_type="text/plain"
@@ -538,9 +597,13 @@ End with [STUDENT_REPLY_REQUIRED].
                     "concept": tutor_state["active_concept"],
                     "level": tutor_state["recursion_depth"]
                 })
-                tutor_state["current_mcq"] = parsed
-                final_reply = "You are incorrect.\n" + reply
 
+                tutor_state["current_mcq"] = parsed
+                final_reply = intro + reply
+
+    # ─────────────────────────────────────────
+    # UPDATE STATE + DIALOGS
+    # ─────────────────────────────────────────
     tutor_state["turns"] += 1
 
     supabase.rpc(
@@ -557,6 +620,10 @@ End with [STUDENT_REPLY_REQUIRED].
         }
     ).execute()
 
-    return StreamingResponse(iter([final_reply]), media_type="text/plain")
+    return StreamingResponse(
+        iter([final_reply]),
+        media_type="text/plain"
+    )
+
 
 
