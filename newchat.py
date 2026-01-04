@@ -64,70 +64,64 @@ def normalize_dialogs(dialogs):
 # 🔒 VERBATIM SYSTEM PROMPT (DO NOT MODIFY)
 # ───────────────────────────────────────────────
 SYSTEM_PROMPT = """
-You are a senior NEET-PG mentor who teaches using diagnostic pedagogy.
+You are a senior NEET-PG mentor using DIAGNOSTIC PEDAGOGY.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CORE PEDAGOGY (NON-NEGOTIABLE)
+CORE GOAL
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-The goal is NOT to finish an MCQ.
-The goal is to IDENTIFY and REPAIR the student's weakest prerequisite.
-
-Every WRONG answer means:
-• The student lacks a deeper prerequisite
-• You must go ONE level DOWN in concepts
-• Never stay at the same conceptual level
+Your job is NOT to finish MCQs.
+Your job is to IDENTIFY and FIX the deepest missing prerequisite.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-COGNITIVE LADDER (STRICT)
+COGNITIVE LADDER (TOP → BOTTOM)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Every MCQ tests ONE of these layers (top → bottom):
-
-1. Recall (definition, formula)
-2. Understanding (meaning, interpretation)
-3. Application (use in scenario)
-4. Comparison (distinguish from similar)
-5. Integration (multi-concept reasoning)
-
-When a student answers WRONG:
-• Identify WHICH layer failed
-• Identify the prerequisite BELOW that layer
-• Teach ONLY that prerequisite
-• Ask an MCQ ONLY about that prerequisite
+1. Recall
+2. Understanding
+3. Application
+4. Comparison
+5. Integration
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-RECURSIVE RULE (CRITICAL)
+RECURSIVE RULES (NON-NEGOTIABLE)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-• NEVER ask the same MCQ again
-• NEVER paraphrase the same MCQ
-• Every recursive MCQ MUST test a DEEPER prerequisite
-• Difficulty goes DOWNWARD, not sideways
-
-If the student answers wrong again:
-→ Repeat the same process
-→ Go one more level DOWN
+• NEVER repeat or paraphrase an MCQ
+• Each WRONG answer means a DEEPER prerequisite is missing
+• Each recursive MCQ MUST be simpler and more fundamental
+• Difficulty always goes DOWN, never sideways
+• Ask exactly ONE MCQ at a time
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 WHEN STUDENT ASKS A QUESTION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-• Answer briefly
-• Do NOT assess correctness
+• Answer briefly (2–3 lines)
+• Do NOT judge correctness
 • Do NOT advance concepts
-• Re-ask the CURRENT MCQ verbatim
+• Re-ask the SAME MCQ verbatim
 • End with [STUDENT_REPLY_REQUIRED]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 WHEN STUDENT ANSWERS WRONG
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-• State the learning gap in ONE line
-• Explain the missing prerequisite (2–3 lines max)
-• Generate a NEW MCQ testing ONLY that prerequisite
-• MCQ must be simpler and more fundamental
+• Start with: "You are incorrect."
+• Identify the learning gap
+• Explain the missing prerequisite (max 3 lines)
+• Mention ONE common NEET-PG confusion
+• Give ONE simple memory hook
+• Generate a NEW MCQ on ONLY that prerequisite
 • End with [STUDENT_REPLY_REQUIRED]
+
+Use tags EXACTLY:
+
+[GAP]:
+[EXPLANATION]:
+[COMMON_CONFUSION]:
+[MEMORY_HOOK]:
+[SUB_CONCEPT]:
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 WHEN STUDENT ANSWERS CORRECTLY
@@ -158,28 +152,32 @@ OUTPUT RULES
 • No deviation from format
 """
 
+
+
 import re
 
 def parse_mcq_from_text(text: str):
-    """
-    Extracts MCQ question, options, and correct answer from GPT output.
-    Returns None if parsing fails.
-    """
     try:
-        q = re.search(r"Question:\s*(.*)", text).group(1).strip()
+        q_match = re.search(r"Question:\s*(.*)", text)
         options = re.findall(r"[A-D]\.\s*(.*)", text)
-        correct = re.search(r"Correct:\s*([A-D])", text).group(1)
+        correct_match = re.search(r"Correct:\s*([A-D])", text)
 
-        if len(options) != 4:
+        if not q_match or not correct_match or len(options) != 4:
             return None
 
         return {
-            "question": q,
+            "question": q_match.group(1).strip(),
             "options": options,
-            "correct_answer": correct
+            "correct_answer": correct_match.group(1).strip()
         }
     except Exception:
         return None
+# 🔒 ADD THIS RIGHT HERE
+def normalize_question(q: str) -> str:
+    """
+    Normalizes MCQ questions to detect paraphrased repeats.
+    """
+    return re.sub(r"\W+", "", q.lower())
 
 # ───────────────────────────────────────────────
 # START / RESUME MCQ SESSION
@@ -209,22 +207,37 @@ End with [STUDENT_REPLY_REQUIRED].
     ])
 
     parsed = parse_mcq_from_text(gpt_reply)
-
     if not parsed:
         raise HTTPException(status_code=500, detail="Failed to generate MCQ")
 
+    # ✅ FIXED tutor_state (MINIMAL additions only)
     tutor_state = {
         "status": "active",
         "awaiting_answer": True,
         "recursion_depth": 0,
         "max_depth": 10,
+        "turns": 0,
+
+        # ✅ REQUIRED for diagnostic recursion
+        "active_gap": "root concept",
+        "active_concept": "root concept",
+
         "current_mcq": {
             "id": "root",
             "question": parsed["question"],
             "options": parsed["options"],
             "correct_answer": parsed["correct_answer"]
         },
-        "turns": 0
+
+        # ✅ CRITICAL: seed history with root MCQ
+        "mcq_history": [
+            {
+                "question": parsed["question"],
+                "gap": "root",
+                "concept": "root",
+                "level": 0
+            }
+        ]
     }
 
     rpc = supabase.rpc(
@@ -239,12 +252,13 @@ End with [STUDENT_REPLY_REQUIRED].
             "p_tutor_state": tutor_state
         }
     ).execute()
-    
+
     if not rpc.data:
         logger.error("[ASK_PARAGRAPH][START] RPC returned no data")
         raise HTTPException(status_code=500, detail="Failed to start session")
-    
+
     return rpc.data[0]
+
 
 
 
@@ -310,6 +324,7 @@ def is_mcq_answer(text: str) -> bool:
         or t.startswith(("option", "ans", "answer"))
         or len(t.split()) <= 3
     )
+
 
 def generate_reinforcement(current_mcq: dict) -> str:
     """
@@ -379,23 +394,12 @@ Generate reinforcement.
 # ───────────────────────────────────────────────
 @router.post("/chat")
 async def continue_chat(request: Request):
-
-    logger.info("🚀 /chat ENTERED")
-
-    # ─────────────────────────────────────────
-    # PARSE REQUEST
-    # ─────────────────────────────────────────
     data = await request.json()
-    student_id = data.get("student_id")
-    mcq_id = data.get("mcq_id")
-    student_message = data.get("message", "")
 
-    if not student_id or not mcq_id:
-        raise HTTPException(status_code=400, detail="Missing identifiers")
+    student_id = data["student_id"]
+    mcq_id = data["mcq_id"]
+    message = data.get("message", "").strip()
 
-    # ─────────────────────────────────────────
-    # FETCH SESSION
-    # ─────────────────────────────────────────
     row = (
         supabase.table("student_mcq_session")
         .select("dialogs, tutor_state")
@@ -406,109 +410,138 @@ async def continue_chat(request: Request):
     )
 
     if not row.data:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(404, "Session not found")
 
-    dialogs = row.data.get("dialogs") or []
-    tutor_state = row.data.get("tutor_state") or {}
+    dialogs = row.data["dialogs"] or []
+    tutor_state = row.data["tutor_state"] or {}
 
-    # ─────────────────────────────────────────
-    # INIT REQUIRED STATE (BACKWARD SAFE)
-    # ─────────────────────────────────────────
     tutor_state.setdefault("recursion_depth", 0)
+    tutor_state.setdefault("max_depth", 8)
     tutor_state.setdefault("mcq_history", [])
     tutor_state.setdefault("active_gap", "core concept")
     tutor_state.setdefault("active_concept", "base concept")
+    tutor_state.setdefault("turns", 0)
 
-    current_mcq = tutor_state.get("current_mcq", {})
+    current_mcq = tutor_state.get("current_mcq")
+    if not current_mcq:
+        raise HTTPException(500, "Corrupt session: missing current MCQ")
 
-    # HARD STOP AFTER MASTERY
+    # 🛑 STOP AFTER MASTERY
     if tutor_state.get("status") == "mastered":
-        return StreamingResponse(
-            iter(["[SESSION_COMPLETED]"]),
-            media_type="text/plain"
+        return StreamingResponse(iter(["[SESSION_COMPLETED]"]), media_type="text/plain")
+
+    # 🛑 MAX DEPTH SAFETY
+    if tutor_state["recursion_depth"] >= tutor_state["max_depth"]:
+        final = (
+            "You are incorrect.\n"
+            "[GAP]: Core foundation missing\n"
+            "[EXPLANATION]: This topic needs revision from basics.\n"
+            "[COMMON_CONFUSION]: Superficial pattern matching without understanding.\n"
+            "[MEMORY_HOOK]: Revise standard textbook definitions.\n"
+            "[SUB_CONCEPT]: Fundamental principles"
         )
+        return StreamingResponse(iter([final]), media_type="text/plain")
 
-    # ─────────────────────────────────────────
-    # GPT CALL WITH HARD CONSTRAINTS
-    # ─────────────────────────────────────────
-    system_guard = f"""
-ACTIVE GAP (DO NOT CHANGE):
-{tutor_state['active_gap']}
+    is_answer = is_mcq_answer(message)
 
-ACTIVE CONCEPT:
-{tutor_state['active_concept']}
-
-RULES (STRICT):
-• Generate a NEW MCQ testing ONLY the active gap
-• MCQ must NOT repeat or paraphrase any previous MCQ
-• MCQ difficulty must be deeper than previous
-• Use exact MCQ format
-"""
-
-    try:
+    # 🟡 STUDENT ASKED A QUESTION
+    if not is_answer:
         reply = chat_with_gpt([
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "system", "content": system_guard},
             *get_active_mcq_context(dialogs),
-            {"role": "user", "content": student_message},
+            {
+                "role": "user",
+                "content": f"""
+The student is asking a clarification.
+
+Question:
+{message}
+
+Answer briefly, then re-ask the SAME MCQ verbatim.
+End with [STUDENT_REPLY_REQUIRED].
+"""
+            }
         ])
-    except Exception:
-        logger.exception("🔥 GPT failed")
-        reply = "[MENTOR]\nTemporary issue. Please retry."
+        final_reply = reply
 
-    final_reply = reply
-
-    # ─────────────────────────────────────────
-    # ✔ CORRECT ANSWER → MASTERY
-    # ─────────────────────────────────────────
-    if "[FEEDBACK_CORRECT]" in reply:
-        tutor_state["status"] = "mastered"
-        tutor_state["awaiting_answer"] = False
-
-        try:
-            reinforcement = generate_reinforcement(current_mcq)
-        except Exception:
-            reinforcement = ""
-
-        final_reply = "[FEEDBACK_CORRECT]"
-        if reinforcement:
-            final_reply += "\n\n" + reinforcement
-
-    # ─────────────────────────────────────────
-    # ❌ WRONG ANSWER → GAP-BASED RECURSION
-    # ─────────────────────────────────────────
+    # 🔵 STUDENT ANSWERED
     else:
-        parsed = parse_mcq_from_text(reply)
+        student_ans = message.strip().upper()[:1]
+        correct_ans = current_mcq["correct_answer"].upper()
 
-        if parsed:
-            new_question = parsed["question"].lower()
+        # ✅ CORRECT
+        if student_ans == correct_ans:
+            tutor_state["status"] = "mastered"
+            reinforcement = generate_reinforcement(current_mcq)
+            final_reply = "[FEEDBACK_CORRECT]\n\n" + reinforcement
 
-            # 🔒 HARD ANTI-REPEAT CHECK
-            for old in tutor_state["mcq_history"]:
-                if old["question"].lower() in new_question or new_question in old["question"].lower():
-                    logger.warning("🚫 Repeated MCQ detected — forcing deeper gap")
-
-                    tutor_state["recursion_depth"] += 1
-                    tutor_state["active_gap"] = f"deeper prerequisite of {tutor_state['active_gap']}"
-                    tutor_state["active_concept"] = f"sub-concept of {tutor_state['active_concept']}"
-
-                    return await continue_chat(request)  # 🔁 force regenerate
-
-            # ✅ Accept NEW MCQ
+        # ❌ WRONG → DIAGNOSTIC
+        else:
             tutor_state["recursion_depth"] += 1
-            tutor_state["mcq_history"].append({
-                "question": parsed["question"],
-                "gap": tutor_state["active_gap"],
-                "concept": tutor_state["active_concept"],
-                "level": tutor_state["recursion_depth"]
-            })
 
-            tutor_state["current_mcq"] = parsed
+            reply = chat_with_gpt([
+                {"role": "system", "content": SYSTEM_PROMPT},
+                *get_active_mcq_context(dialogs),
+                {
+                    "role": "user",
+                    "content": f"""
+The student answered incorrectly.
 
-    # ─────────────────────────────────────────
-    # UPDATE STATE + DIALOGS
-    # ─────────────────────────────────────────
-    tutor_state["turns"] = (tutor_state.get("turns") or 0) + 1
+Student answer: {student_ans}
+Correct answer: {correct_ans}
+
+Follow diagnostic rules strictly.
+End with [STUDENT_REPLY_REQUIRED].
+"""
+                }
+            ])
+
+            # 🔒 TAG ENFORCEMENT
+            for tag in [
+                "[GAP]:",
+                "[EXPLANATION]:",
+                "[COMMON_CONFUSION]:",
+                "[MEMORY_HOOK]:",
+                "[SUB_CONCEPT]:"
+            ]:
+                if tag not in reply:
+                    reply += f"\n{tag} Not specified"
+
+            parsed = parse_mcq_from_text(reply)
+            if not parsed:
+                final_reply = (
+                    "You are incorrect.\n"
+                    "[GAP]: Conceptual misunderstanding\n"
+                    "[EXPLANATION]: Please revise this prerequisite.\n"
+                    "[COMMON_CONFUSION]: Mixing similar terms.\n"
+                    "[MEMORY_HOOK]: One concept → one definition.\n"
+                    "[SUB_CONCEPT]: Foundational concept"
+                )
+            else:
+                # 🔒 HARD ANTI-REPEAT
+                new_q = normalize_question(parsed["question"])
+                for old in tutor_state["mcq_history"]:
+                    if normalize_question(old["question"]) == new_q:
+                       # Instead of raising
+                        tutor_state["recursion_depth"] += 1
+                        tutor_state["active_gap"] = f"deeper prerequisite of {tutor_state['active_gap']}"
+                        tutor_state["active_concept"] = f"sub-concept of {tutor_state['active_concept']}"
+                        
+                        return StreamingResponse(
+                            iter(["[SYSTEM_RETRY]"]),
+                            media_type="text/plain"
+                        )
+
+                tutor_state["mcq_history"].append({
+                    "question": parsed["question"],
+                    "gap": tutor_state["active_gap"],
+                    "concept": tutor_state["active_concept"],
+                    "level": tutor_state["recursion_depth"]
+                })
+                tutor_state["current_mcq"] = parsed
+                final_reply = "You are incorrect.\n" + reply
+
+    tutor_state["turns"] += 1
 
     supabase.rpc(
         "upsert_mcq_session_v11",
@@ -517,17 +550,13 @@ RULES (STRICT):
             "p_mcq_id": mcq_id,
             "p_mcq_payload": {},
             "p_new_dialogs": [
-                {"role": "student", "content": student_message},
+                {"role": "student", "content": message},
                 {"role": "assistant", "content": final_reply},
             ],
             "p_tutor_state": tutor_state,
         }
     ).execute()
 
-    # ─────────────────────────────────────────
-    # STREAM RESPONSE
-    # ─────────────────────────────────────────
-    return StreamingResponse(
-        iter([final_reply]),
-        media_type="text/plain"
-    )
+    return StreamingResponse(iter([final_reply]), media_type="text/plain")
+
+
