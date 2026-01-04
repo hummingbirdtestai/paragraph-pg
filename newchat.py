@@ -163,7 +163,7 @@ def parse_mcq_from_text(text: str):
         return None
 
 # ───────────────────────────────────────────────
-# START / RESUME MCQ SESSION
+# START / RESUME MCQ SESSION  ✅ PROD VERSION
 # ───────────────────────────────────────────────
 @router.post("/start")
 async def start_session(request: Request):
@@ -178,25 +178,22 @@ async def start_session(request: Request):
         {
             "role": "user",
             "content": f"""
-    Generate EXACTLY ONE MCQ in the format below.
-    NO explanations before or after.
-    
-    [MCQ]
-    Question: <text>
-    A. <option>
-    B. <option>
-    C. <option>
-    D. <option>
-    Correct: <A|B|C|D>
-    
-    Base the MCQ on this content:
-    {mcq_payload}
-    
-    End with [STUDENT_REPLY_REQUIRED].
-    """
+Generate EXACTLY ONE MCQ in the format below.
+NO explanations before or after.
+
+[MCQ]
+Question: <text>
+A. <option>
+B. <option>
+C. <option>
+D. <option>
+Correct: <A|B|C|D>
+
+Base the MCQ strictly on this content:
+{mcq_payload}
+"""
         }
     ])
-
 
     parsed = parse_mcq_from_text(gpt_reply)
 
@@ -231,11 +228,12 @@ async def start_session(request: Request):
         }
     ).execute()
 
-    if not rpc.data:
-        logger.error("[ASK_PARAGRAPH][START] RPC returned no data")
+    if not rpc or not rpc.data:
+        logger.error("[ASK_PARAGRAPH][START] RPC failed")
         raise HTTPException(status_code=500, detail="Failed to start session")
 
     return rpc.data[0]
+
 
 
 # ───────────────────────────────────────────────
@@ -351,7 +349,7 @@ OPTIONS:
 
 
 # ───────────────────────────────────────────────
-# CONTINUE CHAT (STUDENT → MENTOR) — DIAGNOSTIC BUILD
+# CONTINUE CHAT (STUDENT → MENTOR)  ✅ PROD VERSION
 # ───────────────────────────────────────────────
 @router.post("/chat")
 async def continue_chat(request: Request):
@@ -441,11 +439,11 @@ async def continue_chat(request: Request):
             final_reply += "\n\n" + reinforcement
 
     # ─────────────────────────────
-    # UPDATE STATE + DIALOGS
+    # UPDATE STATE + DIALOGS (HARD GUARD)
     # ─────────────────────────────
     tutor_state["turns"] = (tutor_state.get("turns") or 0) + 1
 
-    supabase.rpc(
+    rpc = supabase.rpc(
         "upsert_mcq_session_v11",
         {
             "p_student_id": student_id,
@@ -458,6 +456,10 @@ async def continue_chat(request: Request):
             "p_tutor_state": tutor_state,
         }
     ).execute()
+
+    if not rpc or not rpc.data:
+        logger.error("[ASK_PARAGRAPH][CHAT] RPC failed")
+        raise HTTPException(status_code=500, detail="Session update failed")
 
     # ─────────────────────────────
     # STREAM RESPONSE (SINGLE YIELD)
