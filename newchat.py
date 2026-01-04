@@ -5,13 +5,12 @@
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
 import logging
-import time
+
 
 from supabase_client import supabase
 from gpt_utils import chat_with_gpt
 
-from chat.state_extractor import detect_last_block, extract_state
-from chat.suggestion_engine import generate_suggestions
+
 
 # ───────────────────────────────────────────────
 # LOGGER SETUP
@@ -65,162 +64,103 @@ def normalize_dialogs(dialogs):
 # 🔒 VERBATIM SYSTEM PROMPT (DO NOT MODIFY)
 # ───────────────────────────────────────────────
 SYSTEM_PROMPT = """
-You are a 30 Years Experienced NEETPG Teacher and AI Mentor tutoring a NEETPG aspirant to MASTER the concepts required to solve the given MCQ.
+You are a 30 Years Experienced NEETPG Teacher and AI Mentor.
 
-Each MCQ has EXACTLY **3 core concepts** arranged in a dependency chain:
-Concept 1 → Concept 2 → Concept 3
+The MCQ is the SINGLE and ONLY anchor of the conversation.
 
-Your job is to ensure **true mastery** of each concept using a **depth-first recursive MCQ teaching strategy** before moving to the next concept.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ABSOLUTE AUTHORITY RULE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-────────────────────────────────
-CORE TEACHING STRATEGY (MANDATORY)
-────────────────────────────────
+• YOU do NOT decide correctness
+• YOU do NOT decide progression
+• YOU do NOT decide mastery
+• The BACKEND controls all state
 
-• Teaching must be **purely MCQ-driven**.
-• NEVER switch to theory-only questioning.
-• NEVER ask open-ended or descriptive questions.
-• EVERY checkpoint must be an MCQ.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MCQ ANCHOR RULE (MANDATORY)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-For EACH concept, follow this STRICT loop:
+At any time there is EXACTLY ONE active MCQ.
 
-1️⃣ Explain ONE concept briefly, as in a real classroom.
-2️⃣ Immediately ask an MCQ that tests ONLY that explained concept.
-3️⃣ STOP and wait for the student’s response.
+• Student may ask questions
+• Questions NEVER advance the session
+• ONLY a correct MCQ answer ends the loop
 
-────────────────────────────────
-RECURSIVE MASTERY RULE (CRITICAL)
-────────────────────────────────
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WHEN STUDENT ASKS A QUESTION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-If the student answers the MCQ:
+• Answer briefly and clearly
+• Do NOT evaluate correctness
+• Do NOT change the MCQ
+• Re-ask the SAME MCQ VERBATIM
+• End with [STUDENT_REPLY_REQUIRED]
 
-✅ CORRECT:
-- Confirm correctness.
-- Consider this concept MASTERED.
-- Move to the NEXT concept in sequence.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WHEN STUDENT ANSWERS INCORRECTLY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-❌ WRONG:
-- Identify the **specific underlying sub-concept gap** responsible for the error.
-- Explain ONLY that missing sub-concept.
-- Ask a **NEW MCQ** that tests THIS clarification.
-- Do NOT repeat the same MCQ.
-- Continue recursively UNTIL the student answers correctly.
-- ONLY THEN return to the parent concept and continue.
+• Identify the precise learning gap
+• Explain ONLY that gap
+• Generate a NEW MCQ targeting that gap
+• Provide 4 options (A–D)
+• Mark the correct option explicitly
+• End with [STUDENT_REPLY_REQUIRED]
 
-⚠️ You MUST drill DOWN until correctness is achieved.
-⚠️ You MUST drill UP only after mastery is proven.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WHEN STUDENT ANSWERS CORRECTLY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-This creates a **recursive concept chain**, not a flat discussion.
-
-────────────────────────────────
-MCQ GENERATION RULES (VERY IMPORTANT)
-────────────────────────────────
-
-• Every MCQ must be freshly generated.
-• NEVER reuse the original MCQ options.
-• NEVER recycle option wording from earlier MCQs.
-• NEVER keep the same 4 options across questions.
-
-Each MCQ must:
-- Test understanding of the **immediately preceding explanation**
-- Reflect NEETPG exam style
-- Have ONE unambiguous best answer
-
-Options may test:
-- Mechanisms
-- Definitions
-- Clinical application
-- Logical contrasts
-- Cause–effect reasoning
-
-But they MUST be tied ONLY to the concept just taught.
-
-────────────────────────────────
-STUDENT QUESTION HANDLING
-────────────────────────────────
-
-When you ask an MCQ and wait, the student may:
-(a) Answer the MCQ, OR
-(b) Ask any question (related or unrelated).
-
-If the student ASKS A QUESTION:
-- Answer it clearly and concisely.
-- Do NOT evaluate correctness.
-- Do NOT mark MCQ right or wrong.
-- RE-ASK the SAME MCQ afterward.
-- End again with [STUDENT_REPLY_REQUIRED].
-
-────────────────────────────────
-MCQ EVALUATION RULES
-────────────────────────────────
-
-If the student ANSWERS an MCQ:
-- Evaluate correctness strictly.
-
-If correct:
-→ Respond with [FEEDBACK_CORRECT]
-
-If wrong:
-→ Respond with [FEEDBACK_WRONG]
-→ Then [CLARIFICATION]
-→ Then ask a DIFFERENT MCQ to recheck understanding.
-
-NEVER move forward without closing the MCQ loop.
-
-────────────────────────────────
-GLOBAL CONSTRAINTS (NON-NEGOTIABLE)
-────────────────────────────────
-
-• NEVER ignore a student message.
-• NEVER respond with empty output.
-• NEVER move to the next concept without MCQ-verified mastery.
-• NEVER summarize early.
-• NEVER skip recursive drilling.
-
-────────────────────────────────
-FINAL PHASE (ONLY AFTER ALL 3 CONCEPTS)
-────────────────────────────────
-
-After Concept 1, 2, and 3 are fully mastered:
-
-1️⃣ Provide a concise [FINAL_ANSWER] to the original MCQ.
-2️⃣ Provide a [CONCEPT_TABLE] as a ready-reckoner.
-3️⃣ Provide [TAKEAWAYS]:
-   - EXACTLY 5 high-yield facts
-   - Exam-oriented
-   - Memory-anchorable
-   - Frequently tested in NEETPG
-
-────────────────────────────────
-OUTPUT FORMAT RULES (STRICT)
-────────────────────────────────
-
-• Output must be plain text.
-• Use ONLY the approved semantic blocks.
-• Approved blocks:
-  [MENTOR]
-  [CONCEPT title="..."]
-  [MCQ id="..."]
-  [STUDENT_REPLY_REQUIRED]
+• Respond ONLY with:
   [FEEDBACK_CORRECT]
-  [FEEDBACK_WRONG]
-  [CLARIFICATION]
-  [RECHECK_MCQ id="..."]
-  [CONCEPT_TABLE]
-  [FINAL_ANSWER]
-  [TAKEAWAYS]
 
-• Do NOT invent new block types.
-• Do NOT write text outside blocks.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MCQ FORMAT (STRICT)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-────────────────────────────────
-TABLE FORMATTING RULES (CRITICAL)
-────────────────────────────────
+Whenever you generate an MCQ, use EXACTLY this format:
 
-• Use valid GitHub-flavored Markdown.
-• Header row MUST be followed immediately by |---|.
-• Do NOT add extra dashed lines or blank rows.
-• Do NOT break tables across blocks.
+[MCQ]
+Question: <text>
+A. <option>
+B. <option>
+C. <option>
+D. <option>
+Correct: <A|B|C|D>
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+OUTPUT RULES (NON-NEGOTIABLE)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• Plain text only
+• No explanations outside rules
+• No extra commentary
+• No deviation from format
 """
+
+import re
+
+def parse_mcq_from_text(text: str):
+    """
+    Extracts MCQ question, options, and correct answer from GPT output.
+    Returns None if parsing fails.
+    """
+    try:
+        q = re.search(r"Question:\s*(.*)", text).group(1).strip()
+        options = re.findall(r"[A-D]\.\s*(.*)", text)
+        correct = re.search(r"Correct:\s*([A-D])", text).group(1)
+
+        if len(options) != 4:
+            return None
+
+        return {
+            "question": q,
+            "options": options,
+            "correct_answer": correct
+        }
+    except Exception:
+        return None
 
 # ───────────────────────────────────────────────
 # START / RESUME MCQ SESSION
@@ -233,68 +173,55 @@ async def start_session(request: Request):
     mcq_id = data["mcq_id"]
     mcq_payload = data["mcq_payload"]
 
-    logger.info(
-        f"[ASK_PARAGRAPH][START] student_id={student_id} mcq_id={mcq_id}"
-    )
-
-    mentor_reply = chat_with_gpt([
+    gpt_reply = chat_with_gpt([
         {"role": "system", "content": SYSTEM_PROMPT},
         {
             "role": "user",
             "content": f"""
-Here is the MCQ the student is asking about:
+Here is the MCQ the student wants to understand:
 
 {mcq_payload}
 
-Begin the discussion.
+Explain briefly, then generate ONE MCQ.
+Use the exact MCQ format.
+End with [STUDENT_REPLY_REQUIRED].
 """
         }
     ])
 
-    # ⬇️ ADD HERE — initialize teaching state
-    initial_tutor_state = {
-        "phase": "mcq_teaching",
-        "concept_index": 1,
+    parsed = parse_mcq_from_text(gpt_reply)
+
+    if not parsed:
+        raise HTTPException(status_code=500, detail="Failed to generate MCQ")
+
+    tutor_state = {
+        "status": "active",
+        "awaiting_answer": True,
         "recursion_depth": 0,
-        "concept_mastered": False,
-        "turns": 0,
-        "last_block": "[STUDENT_REPLY_REQUIRED]"
+        "max_depth": 10,
+        "current_mcq": {
+            "id": "root",
+            "question": parsed["question"],
+            "options": parsed["options"],
+            "correct_answer": parsed["correct_answer"]
+        },
+        "turns": 0
     }
 
-    logger.info(
-        f"[ASK_PARAGRAPH][START] Initial mentor reply generated "
-        f"(chars={len(mentor_reply)})"
-    )
-
-    rpc = supabase.rpc(
+    supabase.rpc(
         "upsert_mcq_session_v11",
         {
             "p_student_id": student_id,
             "p_mcq_id": mcq_id,
             "p_mcq_payload": mcq_payload,
             "p_new_dialogs": [
-                {
-                    "role": "assistant",
-                    "content": mentor_reply,
-                    "mcq_payload": mcq_payload
-                }
+                {"role": "assistant", "content": gpt_reply}
             ],
-            "p_tutor_state": initial_tutor_state
+            "p_tutor_state": tutor_state
         }
     ).execute()
 
-    if not rpc.data:
-        logger.error(
-            f"[ASK_PARAGRAPH][START][ERROR] Failed to persist session"
-        )
-        raise HTTPException(status_code=500, detail="Failed to start MCQ session")
-
-    logger.info(
-        f"[ASK_PARAGRAPH][START] Session created successfully"
-    )
-
-    return rpc.data[0]
-
+    return {"status": "started"}
 
 # ───────────────────────────────────────────────
 # 🔥 LOAD EXISTING SESSION
@@ -351,28 +278,24 @@ def get_active_mcq_context(dialogs, max_turns=4):
     # Restore order and cap size
     return normalize_dialogs(list(reversed(filtered))[-max_turns:])
 
+def is_mcq_answer(text: str) -> bool:
+    t = text.strip().lower()
+    return (
+        t in {"a", "b", "c", "d"}
+        or t.startswith(("option", "ans", "answer"))
+        or len(t.split()) <= 3
+    )
 
 # ───────────────────────────────────────────────
 # CONTINUE CHAT (STUDENT → MENTOR)
 # ───────────────────────────────────────────────
 @router.post("/chat")
 async def continue_chat(request: Request):
-    start_time = time.time()
-
     data = await request.json()
+
     student_id = data["student_id"]
     mcq_id = data["mcq_id"]
     student_message = data["message"]
-
-    logger.info(
-        "[ASK_PARAGRAPH][STUDENT_INPUT] raw='%s'",
-        student_message.strip(),
-    )
-
-    logger.info(
-        f"[ASK_PARAGRAPH][CHAT] student_id={student_id} mcq_id={mcq_id} "
-        f"message_len={len(student_message or '')}"
-    )
 
     row = (
         supabase.table("student_mcq_session")
@@ -384,140 +307,146 @@ async def continue_chat(request: Request):
     )
 
     if not row.data:
-        logger.warning(
-            f"[ASK_PARAGRAPH][CHAT][404] Session not found "
-            f"student_id={student_id} mcq_id={mcq_id}"
-        )
         raise HTTPException(status_code=404, detail="Session not found")
 
     dialogs = row.data["dialogs"]
-    tutor_state = row.data["tutor_state"] or {}
-    concept_index = tutor_state.get("concept_index", 1)
+    tutor_state = row.data["tutor_state"]
+
+    # ─────────────────────────────────────────
+    # HARD STATE GUARDS (FIX #2)
+    # ─────────────────────────────────────────
+    if not tutor_state or not tutor_state.get("current_mcq"):
+        raise HTTPException(
+            status_code=500,
+            detail="Invalid tutor state: missing current_mcq"
+        )
+
+    current_mcq = tutor_state["current_mcq"]
+    awaiting_answer = tutor_state.get("awaiting_answer", True)
     recursion_depth = tutor_state.get("recursion_depth", 0)
+    max_depth = tutor_state.get("max_depth", 10)
 
-    if tutor_state.get("last_block") == "[STUDENT_REPLY_REQUIRED]":
-        if not student_message or not student_message.strip():
-            raise HTTPException(
-                status_code=409,
-                detail="Student response required before proceeding"
-            )
+    student_is_answering = is_mcq_answer(student_message)
 
-    mcq_payload = None
-    for d in dialogs:
-        if d["role"] == "assistant" and isinstance(d.get("mcq_payload"), dict):
-            mcq_payload = d["mcq_payload"]
-            break
-
-    mcq_context = ""
-    if mcq_payload:
-        mcq_context = f"""
-MCQ CONTEXT (DO NOT REPEAT VERBATIM):
-Stem: {mcq_payload.get("stem")}
-Options: {mcq_payload.get("options")}
-Correct Answer: {mcq_payload.get("correct_answer")}
-Feedback: {mcq_payload.get("feedback")}
-Learning Gap: {mcq_payload.get("learning_gap")}
-"""
-
-    gpt_messages = [
-        {"role": "system", "content": SYSTEM_PROMPT}
-    ]
-    
-    if mcq_context:
-        gpt_messages.append({
-            "role": "user",
-            "content": mcq_context
-        })
-    
-    gpt_messages.extend(get_active_mcq_context(dialogs))
-
-    gpt_messages.append({
-        "role": "user",
-        "content": f"""
-Student response:
+    # ─────────────────────────────────────────
+    # CASE 1: STUDENT ASKED A QUESTION
+    # ─────────────────────────────────────────
+    if awaiting_answer and not student_is_answering:
+        full_reply = chat_with_gpt([
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": f"""
+Student asked:
 \"\"\"{student_message}\"\"\"
 
-Decide whether this is:
-- an MCQ answer (letter or free text), OR
-- a question.
+Answer briefly.
 
-Follow all conversation rules strictly.
+Re-ask this MCQ EXACTLY:
+
+[MCQ]
+Question: {current_mcq["question"]}
+A. {current_mcq["options"][0]}
+B. {current_mcq["options"][1]}
+C. {current_mcq["options"][2]}
+D. {current_mcq["options"][3]}
+
+End with [STUDENT_REPLY_REQUIRED].
 """
-    })
+            }
+        ])
 
-    logger.info(
-        "[ASK_PARAGRAPH][GPT_REPLAY] messages=%d chars≈%d",
-        len(gpt_messages),
-        sum(len(m["content"]) for m in gpt_messages),
-    )
+        # ─────────────────────────────────────
+        # ENFORCE MCQ ANCHOR (FIX #4)
+        # ─────────────────────────────────────
+        if "[STUDENT_REPLY_REQUIRED]" not in full_reply:
+            raise HTTPException(
+                status_code=500,
+                detail="GPT violated MCQ anchor rule"
+            )
 
-    def event_generator():
-        full_reply = ""
-    
-        try:
+    # ─────────────────────────────────────────
+    # CASE 2: STUDENT ANSWERED MCQ
+    # ─────────────────────────────────────────
+    else:
+        normalized_answer = student_message.strip().upper()
 
-            full_reply = chat_with_gpt(gpt_messages)
-            yield full_reply
+        # ─────────────────────────────────────
+        # CORRECT ANSWER (FIX #3)
+        # ─────────────────────────────────────
+        if (
+            is_mcq_answer(student_message)
+            and normalized_answer.endswith(current_mcq["correct_answer"])
+        ):
+            tutor_state["status"] = "completed"
+            tutor_state["awaiting_answer"] = False
+            full_reply = "[FEEDBACK_CORRECT]"
 
-    
-        finally:
-            if not full_reply:
-                full_reply = "[MENTOR]\nTemporary issue. Please retry."
-    
-            prev_block = tutor_state.get("last_block")
-            last_block = detect_last_block(full_reply)
-    
-            if tutor_state.get("recursion_depth", 0) > 5:
-                tutor_state["recursion_depth"] = 0
-    
-            if last_block == "[FEEDBACK_CORRECT]":
-                tutor_state["concept_index"] = min(
-                    tutor_state.get("concept_index", 1) + 1,
-                    3
-                )
-                tutor_state["recursion_depth"] = 0
-            
-            elif last_block == "[FEEDBACK_WRONG]":
-                tutor_state["recursion_depth"] += 1
+        # ─────────────────────────────────────
+        # WRONG ANSWER → RECURSION
+        # ─────────────────────────────────────
+        else:
+            recursion_depth += 1
+            tutor_state["recursion_depth"] = recursion_depth
 
-    
-            tutor_state["last_block"] = last_block
-            tutor_state["turns"] = (tutor_state.get("turns", 0) or 0) + 1
-    
-            supabase.rpc(
-                "upsert_mcq_session_v11",
-                {
-                    "p_student_id": student_id,
-                    "p_mcq_id": mcq_id,
-                    "p_mcq_payload": {},
-                    "p_new_dialogs": [
-                        {"role": "student", "content": student_message},
-                        {"role": "assistant", "content": full_reply},
-                    ],
-                    "p_tutor_state": tutor_state,
+            if recursion_depth >= max_depth:
+                tutor_state["status"] = "completed"
+                tutor_state["awaiting_answer"] = False
+                full_reply = "[MENTOR]\nPause and revise this concept again."
+
+            else:
+                gpt_reply = chat_with_gpt([
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": f"""
+Student answered incorrectly:
+\"\"\"{student_message}\"\"\"
+
+Explain the learning gap and generate a NEW MCQ.
+Use exact MCQ format.
+End with [STUDENT_REPLY_REQUIRED].
+"""
+                    }
+                ])
+
+                parsed = parse_mcq_from_text(gpt_reply)
+                if not parsed:
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Failed to parse new MCQ"
+                    )
+
+                tutor_state["current_mcq"] = {
+                    "id": f"recursion_{recursion_depth}",
+                    "question": parsed["question"],
+                    "options": parsed["options"],
+                    "correct_answer": parsed["correct_answer"]
                 }
-            ).execute()
-    
-            state = extract_state({
-                "dialogs": dialogs + [
-                    {"role": "student", "content": student_message},
-                    {"role": "assistant", "content": full_reply},
-                ],
-                "current_concept": tutor_state.get("concept_index"),
-            })
-    
-            suggestions = generate_suggestions(state)
-    
-            supabase.table("student_mcq_session").update(
-                {"next_suggestions": suggestions}
-            ).eq("student_id", student_id).eq("mcq_id", mcq_id).execute()
+
+                tutor_state["awaiting_answer"] = True
+                full_reply = gpt_reply
+
+    # ─────────────────────────────────────────
+    # FINAL STATE UPDATE
+    # ─────────────────────────────────────────
+    tutor_state["turns"] = tutor_state.get("turns", 0) + 1
+
+    supabase.rpc(
+        "upsert_mcq_session_v11",
+        {
+            "p_student_id": student_id,
+            "p_mcq_id": mcq_id,
+            "p_mcq_payload": {},
+            "p_new_dialogs": [
+                {"role": "student", "content": student_message},
+                {"role": "assistant", "content": full_reply},
+            ],
+            "p_tutor_state": tutor_state,
+        }
+    ).execute()
+
+    return StreamingResponse(iter([full_reply]), media_type="text/plain")
 
 
 
-    # ────────────────
-    # 🔧 SURGICAL NON-STREAMING EXECUTION
-    # ────────────────
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/plain"
-    )
