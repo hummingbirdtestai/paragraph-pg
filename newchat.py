@@ -366,22 +366,13 @@ async def continue_chat(request: Request):
     # ─────────────────────────────────────────
     # PARSE REQUEST
     # ─────────────────────────────────────────
-    try:
-        data = await request.json()
-    except Exception:
-        logger.exception("❌ Invalid JSON")
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-
+    data = await request.json()
     student_id = data.get("student_id")
     mcq_id = data.get("mcq_id")
     student_message = data.get("message", "")
 
-    logger.info(
-        "👤 student_id=%s mcq_id=%s msg_len=%d",
-        student_id,
-        mcq_id,
-        len(student_message or "")
-    )
+    if not student_id or not mcq_id:
+        raise HTTPException(status_code=400, detail="Missing identifiers")
 
     # ─────────────────────────────────────────
     # FETCH SESSION
@@ -396,14 +387,22 @@ async def continue_chat(request: Request):
     )
 
     if not row.data:
-        logger.error("❌ Session not found")
         raise HTTPException(status_code=404, detail="Session not found")
 
     dialogs = row.data.get("dialogs") or []
     tutor_state = row.data.get("tutor_state") or {}
+
+    # ─────────────────────────────────────────
+    # INIT REQUIRED STATE (BACKWARD SAFE)
+    # ─────────────────────────────────────────
+    tutor_state.setdefault("recursion_depth", 0)
+    tutor_state.setdefault("mcq_history", [])
+    tutor_state.setdefault("active_gap", "core concept")
+    tutor_state.setdefault("active_concept", "base concept")
+
     current_mcq = tutor_state.get("current_mcq", {})
 
-    # 🔒 OPTIONAL HARD GUARD — prevent re-entry after mastery
+    # HARD STOP AFTER MASTERY
     if tutor_state.get("status") == "mastered":
         return StreamingResponse(
             iter(["[SESSION_COMPLETED]"]),
@@ -411,43 +410,81 @@ async def continue_chat(request: Request):
         )
 
     # ─────────────────────────────────────────
-    # GPT CALL (MAIN TUTOR)
+    # GPT CALL WITH HARD CONSTRAINTS
     # ─────────────────────────────────────────
+    system_guard = f"""
+ACTIVE GAP (DO NOT CHANGE):
+{tutor_state['active_gap']}
+
+ACTIVE CONCEPT:
+{tutor_state['active_concept']}
+
+RULES (STRICT):
+• Generate a NEW MCQ testing ONLY the active gap
+• MCQ must NOT repeat or paraphrase any previous MCQ
+• MCQ difficulty must be deeper than previous
+• Use exact MCQ format
+"""
+
     try:
         reply = chat_with_gpt([
             {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_guard},
             *get_active_mcq_context(dialogs),
-            {
-                "role": "user",
-                "content": student_message
-            }
+            {"role": "user", "content": student_message},
         ])
     except Exception:
         logger.exception("🔥 GPT failed")
         reply = "[MENTOR]\nTemporary issue. Please retry."
 
-    logger.info("🤖 GPT reply_len=%d", len(reply))
-
     final_reply = reply
 
     # ─────────────────────────────────────────
-    # ✅ POST-MASTERY ENRICHMENT
+    # ✔ CORRECT ANSWER → MASTERY
     # ─────────────────────────────────────────
     if "[FEEDBACK_CORRECT]" in reply:
-        logger.info("🏁 MCQ MASTERED")
-
         tutor_state["status"] = "mastered"
         tutor_state["awaiting_answer"] = False
 
         try:
             reinforcement = generate_reinforcement(current_mcq)
         except Exception:
-            logger.exception("❌ Reinforcement generation failed")
             reinforcement = ""
 
         final_reply = "[FEEDBACK_CORRECT]"
         if reinforcement:
             final_reply += "\n\n" + reinforcement
+
+    # ─────────────────────────────────────────
+    # ❌ WRONG ANSWER → GAP-BASED RECURSION
+    # ─────────────────────────────────────────
+    else:
+        parsed = parse_mcq_from_text(reply)
+
+        if parsed:
+            new_question = parsed["question"].lower()
+
+            # 🔒 HARD ANTI-REPEAT CHECK
+            for old in tutor_state["mcq_history"]:
+                if old["question"].lower() in new_question or new_question in old["question"].lower():
+                    logger.warning("🚫 Repeated MCQ detected — forcing deeper gap")
+
+                    tutor_state["recursion_depth"] += 1
+                    tutor_state["active_gap"] = f"deeper prerequisite of {tutor_state['active_gap']}"
+                    tutor_state["active_concept"] = f"sub-concept of {tutor_state['active_concept']}"
+
+                    return await continue_chat(request)  # 🔁 force regenerate
+
+            # ✅ Accept NEW MCQ
+            tutor_state["recursion_depth"] += 1
+            tutor_state["mcq_history"].append({
+                "question": parsed["question"],
+                "gap": tutor_state["active_gap"],
+                "concept": tutor_state["active_concept"],
+                "level": tutor_state["recursion_depth"]
+            })
+
+            tutor_state["current_mcq"] = parsed
 
     # ─────────────────────────────────────────
     # UPDATE STATE + DIALOGS
@@ -469,13 +506,9 @@ async def continue_chat(request: Request):
     ).execute()
 
     # ─────────────────────────────────────────
-    # STREAM RESPONSE (SINGLE YIELD — FE SAFE)
+    # STREAM RESPONSE
     # ─────────────────────────────────────────
-    def event_generator():
-        yield final_reply
-        return
-
     return StreamingResponse(
-        event_generator(),
+        iter([final_reply]),
         media_type="text/plain"
     )
