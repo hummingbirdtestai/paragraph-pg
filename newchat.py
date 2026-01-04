@@ -387,6 +387,49 @@ Generate reinforcement.
 """
         }
     ])
+def generate_correct_reinforcement(current_mcq: dict) -> str:
+    """
+    Generates short concept reinforcement AFTER correct answer
+    but BEFORE high-yield facts.
+    """
+
+    question = current_mcq.get("question", "")
+
+    return chat_with_gpt([
+        {
+            "role": "system",
+            "content": """
+You are a senior NEET-PG mentor.
+
+The student has answered the MCQ correctly.
+
+Your task:
+• Appreciate the correct answer
+• Reinforce the CORE CONCEPT in 3–5 exam-oriented lines
+• Focus on how this concept is tested in NEET-PG
+
+FORMAT (STRICT):
+
+Correct answer.
+
+<3–5 lines of NEET-PG oriented concept reinforcement>
+
+RULES:
+• Plain text
+• No emojis
+• No tables
+• No MCQs
+• No headings
+"""
+        },
+        {
+            "role": "user",
+            "content": f"""
+MCQ:
+{question}
+"""
+        }
+    ])
 
 
 # ───────────────────────────────────────────────
@@ -434,12 +477,9 @@ async def continue_chat(request: Request):
 
     # 🛑 STOP AFTER MASTERY
     if tutor_state.get("status") == "mastered":
-        return StreamingResponse(
-            iter(["[SESSION_COMPLETED]"]),
-            media_type="text/plain"
-        )
+        return StreamingResponse(iter(["[SESSION_COMPLETED]"]), media_type="text/plain")
 
-    # 🛑 SAFETY: MAX DEPTH
+    # 🛑 MAX DEPTH SAFETY
     if tutor_state["recursion_depth"] >= tutor_state["max_depth"]:
         final = (
             "You are incorrect.\n"
@@ -451,12 +491,11 @@ async def continue_chat(request: Request):
         )
         return StreamingResponse(iter([final]), media_type="text/plain")
 
-    # ─────────────────────────────────────────
-    # DETERMINE MESSAGE TYPE
-    # ─────────────────────────────────────────
     is_answer = is_mcq_answer(message)
 
-    # 🟡 STUDENT ASKED A QUESTION
+    # ─────────────────────────────────────────
+    # STUDENT ASKED A QUESTION
+    # ─────────────────────────────────────────
     if not is_answer:
         reply = chat_with_gpt([
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -474,25 +513,36 @@ End with [STUDENT_REPLY_REQUIRED].
 """
             }
         ])
-
         final_reply = reply
 
-    # 🔵 STUDENT ANSWERED
+    # ─────────────────────────────────────────
+    # STUDENT ANSWERED
+    # ─────────────────────────────────────────
     else:
         student_ans = message.strip().upper()[:1]
         correct_ans = current_mcq["correct_answer"].upper()
 
-        # ✅ CORRECT ANSWER (BACKEND DECIDES)
+        # ✅ CORRECT ANSWER — FIXED FLOW
         if student_ans == correct_ans:
             tutor_state["status"] = "mastered"
-            reinforcement = generate_reinforcement(current_mcq)
-            final_reply = "[FEEDBACK_CORRECT]\n\n" + reinforcement
 
-        # ❌ WRONG ANSWER — FIXED PEDAGOGY
+            concept_recap = generate_correct_reinforcement(current_mcq)
+            exam_reinforcement = generate_reinforcement(current_mcq)
+
+            concept_recap = concept_recap.strip() or "Correct answer. This is a high-yield NEET-PG concept."
+            exam_reinforcement = exam_reinforcement.strip() or ""
+            
+            final_reply = (
+                "[FEEDBACK_CORRECT]\n\n"
+                + concept_recap
+                + ("\n\n" + exam_reinforcement if exam_reinforcement else "")
+            )
+
+
+        # ❌ WRONG ANSWER — SINGLE INTRO, DEEP TEACHING
         else:
             tutor_state["recursion_depth"] += 1
 
-            # ✅ BACKEND-CONTROLLED INTRO (ONCE ONLY)
             intro = (
                 "You are incorrect.\n"
                 f"The correct answer is {correct_ans}.\n\n"
@@ -509,10 +559,10 @@ The student answered an MCQ incorrectly.
 Your job is TEACHING FIRST, DIAGNOSIS SECOND.
 
 ━━━━━━━━━━━━━━━━━━━━━━
-STRICT ORDER (MANDATORY)
+MANDATORY ORDER
 ━━━━━━━━━━━━━━━━━━━━━━
 
-1. Explain the CORE CONCEPT in detail (5–8 lines, exam-oriented)
+1. Explain the CORE CONCEPT in detail (5–8 exam-focused lines)
 2. Explain WHY the student made this mistake
 3. Identify the specific missing prerequisite
 4. Give ONE memory hook
@@ -527,7 +577,7 @@ FORMAT (STRICT)
 <detailed explanation>
 
 [GAP]:
-<what exactly is missing>
+<missing prerequisite>
 
 [COMMON_CONFUSION]:
 <why students mix this up>
@@ -546,13 +596,9 @@ C. <option>
 D. <option>
 Correct: <A|B|C|D>
 
-━━━━━━━━━━━━━━━━━━━━━━
-RULES
-━━━━━━━━━━━━━━━━━━━━━━
-
+RULES:
 • Do NOT repeat “You are incorrect”
-• Do NOT reveal the correct answer
-• Do NOT mention recursion or pedagogy
+• Do NOT reveal correct answer again
 • Plain text only
 """
                 },
@@ -562,8 +608,6 @@ RULES
                     "content": f"""
 Student answer: {student_ans}
 Correct answer: {correct_ans}
-
-Teach properly, then diagnose, then ask next MCQ.
 """
                 }
             ])
@@ -579,17 +623,13 @@ Teach properly, then diagnose, then ask next MCQ.
                     "[SUB_CONCEPT]: Foundational concept"
                 )
             else:
-                # 🔒 HARD ANTI-REPEAT
                 new_q = normalize_question(parsed["question"])
                 for old in tutor_state["mcq_history"]:
                     if normalize_question(old["question"]) == new_q:
                         tutor_state["recursion_depth"] += 1
                         tutor_state["active_gap"] = f"deeper prerequisite of {tutor_state['active_gap']}"
                         tutor_state["active_concept"] = f"sub-concept of {tutor_state['active_concept']}"
-                        return StreamingResponse(
-                            iter(["[SYSTEM_RETRY]"]),
-                            media_type="text/plain"
-                        )
+                        return StreamingResponse(iter(["[SYSTEM_RETRY]"]), media_type="text/plain")
 
                 tutor_state["mcq_history"].append({
                     "question": parsed["question"],
@@ -601,9 +641,6 @@ Teach properly, then diagnose, then ask next MCQ.
                 tutor_state["current_mcq"] = parsed
                 final_reply = intro + reply
 
-    # ─────────────────────────────────────────
-    # UPDATE STATE + DIALOGS
-    # ─────────────────────────────────────────
     tutor_state["turns"] += 1
 
     supabase.rpc(
@@ -620,10 +657,8 @@ Teach properly, then diagnose, then ask next MCQ.
         }
     ).execute()
 
-    return StreamingResponse(
-        iter([final_reply]),
-        media_type="text/plain"
-    )
+    return StreamingResponse(iter([final_reply]), media_type="text/plain")
+
 
 
 
