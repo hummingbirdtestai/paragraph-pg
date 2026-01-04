@@ -60,6 +60,19 @@ def normalize_dialogs(dialogs):
 
     return safe
 
+def build_fast_system_context(concept_index: int, recursion_depth: int) -> str:
+    """
+    Minimal deterministic system context for speed & obedience.
+    """
+    return f"""
+TEACHING STATE (STRICT):
+- Current concept: {concept_index} / 3
+- Recursion depth: {recursion_depth}
+- Do NOT introduce new concepts.
+- Ask MCQs ONLY.
+- Drill down if wrong, advance only if correct.
+"""
+
 
 # ───────────────────────────────────────────────
 # 🔒 VERBATIM SYSTEM PROMPT (DO NOT MODIFY)
@@ -423,17 +436,9 @@ Learning Gap: {mcq_payload.get("learning_gap")}
 
     gpt_messages.append({
         "role": "system",
-        "content": f"""
-    TEACHING STATE (NON-NEGOTIABLE):
-    - You are currently teaching Concept {concept_index} of 3.
-    - You MUST NOT exceed Concept 3.
-    - You MUST complete Concept {concept_index} fully before moving forward.
-    - Current recursion depth = {recursion_depth}.
-    - If recursion_depth > 5, force mastery with clarification + final MCQ.
-    - After mastery, you MUST produce a flow-style summary of mistakes before moving to next concept.
-    """
+        "content": build_fast_system_context(concept_index, recursion_depth)
     })
-
+    
     if mcq_context:
         gpt_messages.append({"role": "system", "content": mcq_context})
 
@@ -461,56 +466,40 @@ Follow all conversation rules strictly.
 
     def event_generator():
         full_reply = ""
-
+    
         try:
+            # ⚡ Instant kick-start
+            yield (
+                "[MENTOR]\n"
+                "Analyzing your response and identifying the exact concept gap…\n\n"
+            )
+    
             full_reply = chat_with_gpt(gpt_messages)
             yield full_reply
+    
         finally:
-            elapsed = round(time.time() - start_time, 2)
-
+            if not full_reply:
+                full_reply = "[MENTOR]\nTemporary issue. Please retry."
+    
             prev_block = tutor_state.get("last_block")
             last_block = detect_last_block(full_reply)
-
-            # ⬇️ Concept mastery detection
-            if last_block == "[FEEDBACK_CORRECT]":
-                tutor_state["concept_mastered"] = True
+    
+            if tutor_state.get("recursion_depth", 0) > 5:
                 tutor_state["recursion_depth"] = 0
-            
-                if tutor_state.get("concept_index", 1) < 3:
-                    tutor_state["concept_index"] += 1
-                    tutor_state["concept_mastered"] = False
-            
+    
+            if last_block == "[FEEDBACK_CORRECT]":
+                tutor_state["recursion_depth"] = 0
+                tutor_state["concept_index"] = min(
+                    tutor_state.get("concept_index", 1) + 1,
+                    3
+                )
+    
             elif last_block == "[FEEDBACK_WRONG]":
-                tutor_state["recursion_depth"] = tutor_state.get("recursion_depth", 0) + 1
-
-            
-            if not full_reply.strip():
-                logger.error(
-                    "[ASK_PARAGRAPH][GPT_EMPTY_REPLY] last_block=%s student_msg='%s'",
-                    prev_block,
-                    student_message,
-                )
-
-            if last_block not in {
-                "[STUDENT_REPLY_REQUIRED]",
-                "[FEEDBACK_CORRECT]",
-                "[FEEDBACK_WRONG]"
-            }:
-                logger.warning(
-                    "[ASK_PARAGRAPH][UNEXPECTED_BLOCK] got=%s",
-                    last_block,
-                )
-
-
-            logger.info(
-                "[ASK_PARAGRAPH][BLOCK_TRANSITION] %s → %s",
-                prev_block,
-                last_block,
-            )
-
+                tutor_state["recursion_depth"] += 1
+    
             tutor_state["last_block"] = last_block
             tutor_state["turns"] = (tutor_state.get("turns", 0) or 0) + 1
-
+    
             supabase.rpc(
                 "upsert_mcq_session_v11",
                 {
@@ -524,7 +513,7 @@ Follow all conversation rules strictly.
                     "p_tutor_state": tutor_state,
                 }
             ).execute()
-
+    
             state = extract_state({
                 "dialogs": dialogs + [
                     {"role": "student", "content": student_message},
@@ -532,25 +521,19 @@ Follow all conversation rules strictly.
                 ],
                 "current_concept": tutor_state.get("concept_index"),
             })
-
+    
             suggestions = generate_suggestions(state)
-
-            logger.info(
-                "[ASK_PARAGRAPH][SUGGESTIONS] ids=%s",
-                [s["id"] for s in suggestions],
-            )
-
+    
             supabase.table("student_mcq_session").update(
                 {"next_suggestions": suggestions}
             ).eq("student_id", student_id).eq("mcq_id", mcq_id).execute()
 
+
+
     # ────────────────
     # 🔧 SURGICAL NON-STREAMING EXECUTION
     # ────────────────
-    generator = event_generator()
-    full_reply = next(generator)
-
-    return PlainTextResponse(
-        full_reply,
+    return StreamingResponse(
+        event_generator(),
         media_type="text/plain"
     )
