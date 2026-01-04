@@ -290,15 +290,35 @@ def is_mcq_answer(text: str) -> bool:
 # CONTINUE CHAT (STUDENT → MENTOR)
 # ───────────────────────────────────────────────
 # ───────────────────────────────────────────────
-# CONTINUE CHAT (STUDENT → MENTOR) — FE SAFE
+# CONTINUE CHAT (STUDENT → MENTOR) — DIAGNOSTIC BUILD
 # ───────────────────────────────────────────────
 @router.post("/chat")
 async def continue_chat(request: Request):
-    data = await request.json()
 
-    student_id = data["student_id"]
-    mcq_id = data["mcq_id"]
-    student_message = data["message"]
+    logger.info("🚀 /chat ENTERED")
+
+    try:
+        data = await request.json()
+        logger.info("📥 Request JSON parsed")
+    except Exception:
+        logger.exception("❌ Failed to parse request JSON")
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    student_id = data.get("student_id")
+    mcq_id = data.get("mcq_id")
+    student_message = data.get("message", "")
+
+    logger.info(
+        "👤 student_id=%s mcq_id=%s msg_len=%d",
+        student_id,
+        mcq_id,
+        len(student_message or "")
+    )
+
+    # ─────────────────────────────────────────
+    # FETCH SESSION
+    # ─────────────────────────────────────────
+    logger.info("🧠 Fetching session from Supabase")
 
     row = (
         supabase.table("student_mcq_session")
@@ -310,15 +330,20 @@ async def continue_chat(request: Request):
     )
 
     if not row.data:
+        logger.error("❌ Session NOT FOUND")
         raise HTTPException(status_code=404, detail="Session not found")
 
-    dialogs = row.data["dialogs"] or []
-    tutor_state = row.data["tutor_state"] or {}
+    logger.info("✅ Supabase session fetched")
+
+    dialogs = row.data.get("dialogs") or []
+    tutor_state = row.data.get("tutor_state") or {}
 
     # ─────────────────────────────────────────
-    # 🔒 ALL HEAVY WORK BEFORE STREAM
+    # GPT CALL
     # ─────────────────────────────────────────
     try:
+        logger.info("🤖 Calling chat_with_gpt")
+
         reply = chat_with_gpt([
             {"role": "system", "content": SYSTEM_PROMPT},
             *get_active_mcq_context(dialogs),
@@ -327,33 +352,49 @@ async def continue_chat(request: Request):
                 "content": student_message
             }
         ])
+
+        logger.info("🤖 GPT returned reply_len=%d", len(reply))
+
     except Exception:
-        logger.exception("[ASK_PARAGRAPH][CHAT] GPT failure")
+        logger.exception("🔥 GPT FAILED")
         reply = "[MENTOR]\nTemporary issue. Please retry."
 
-    # Update state BEFORE streaming
+    # ─────────────────────────────────────────
+    # UPDATE STATE
+    # ─────────────────────────────────────────
     tutor_state["turns"] = (tutor_state.get("turns") or 0) + 1
 
-    supabase.rpc(
-        "upsert_mcq_session_v11",
-        {
-            "p_student_id": student_id,
-            "p_mcq_id": mcq_id,
-            "p_mcq_payload": {},
-            "p_new_dialogs": [
-                {"role": "student", "content": student_message},
-                {"role": "assistant", "content": reply},
-            ],
-            "p_tutor_state": tutor_state,
-        }
-    ).execute()
+    logger.info("💾 Writing session update to Supabase")
+
+    try:
+        supabase.rpc(
+            "upsert_mcq_session_v11",
+            {
+                "p_student_id": student_id,
+                "p_mcq_id": mcq_id,
+                "p_mcq_payload": {},
+                "p_new_dialogs": [
+                    {"role": "student", "content": student_message},
+                    {"role": "assistant", "content": reply},
+                ],
+                "p_tutor_state": tutor_state,
+            }
+        ).execute()
+
+        logger.info("✅ Supabase write completed")
+
+    except Exception:
+        logger.exception("❌ Supabase write FAILED")
 
     # ─────────────────────────────────────────
-    # 🔥 PURE SINGLE-YIELD GENERATOR
+    # STREAM RESPONSE (FE-SAFE)
     # ─────────────────────────────────────────
     def event_generator():
+        logger.info("📤 Streaming reply to FE")
         yield reply
-        return  # ⛔ hard stop → stream CLOSES
+        logger.info("🧨 Stream completed")
+
+    logger.info("📡 Returning StreamingResponse")
 
     return StreamingResponse(
         event_generator(),
