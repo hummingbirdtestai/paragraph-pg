@@ -105,7 +105,7 @@ WHEN STUDENT ANSWERS INCORRECTLY
 • Explain ONLY that gap
 • Generate a NEW MCQ targeting that gap
 • Provide 4 options (A–D)
-• INCLUDE the correct option ONLY in a hidden line
+• Mark the correct option explicitly
 • End with [STUDENT_REPLY_REQUIRED]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -118,6 +118,8 @@ WHEN STUDENT ANSWERS CORRECTLY
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 MCQ FORMAT (STRICT)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Whenever you generate an MCQ, use EXACTLY this format:
 
 [MCQ]
 Question: <text>
@@ -137,33 +139,31 @@ OUTPUT RULES (NON-NEGOTIABLE)
 • No deviation from format
 """
 
-
-
 import re
 
 def parse_mcq_from_text(text: str):
+    """
+    Extracts MCQ question, options, and correct answer from GPT output.
+    Returns None if parsing fails.
+    """
     try:
-        q_match = re.search(r"Question:\s*(.+)", text)
-        options = re.findall(r"[A-D]\.\s*(.+)", text)
-        correct_match = re.search(
-            r"Correct\s*[:\-]\s*([A-D])",
-            text,
-            re.IGNORECASE
-        )
+        q = re.search(r"Question:\s*(.*)", text).group(1).strip()
+        options = re.findall(r"[A-D]\.\s*(.*)", text)
+        correct = re.search(r"Correct:\s*([A-D])", text).group(1)
 
-        if not q_match or len(options) != 4 or not correct_match:
+        if len(options) != 4:
             return None
 
         return {
-            "question": q_match.group(1).strip(),
-            "options": [o.strip() for o in options],
-            "correct_answer": correct_match.group(1).upper()
+            "question": q,
+            "options": options,
+            "correct_answer": correct
         }
     except Exception:
         return None
 
 # ───────────────────────────────────────────────
-# START / RESUME MCQ SESSION  ✅ PROD VERSION
+# START / RESUME MCQ SESSION
 # ───────────────────────────────────────────────
 @router.post("/start")
 async def start_session(request: Request):
@@ -178,19 +178,13 @@ async def start_session(request: Request):
         {
             "role": "user",
             "content": f"""
-Generate EXACTLY ONE MCQ in the format below.
-NO explanations before or after.
+Here is the MCQ the student wants to understand:
 
-[MCQ]
-Question: <text>
-A. <option>
-B. <option>
-C. <option>
-D. <option>
-Correct: <A|B|C|D>
-
-Base the MCQ strictly on this content:
 {mcq_payload}
+
+Explain briefly, then generate ONE MCQ.
+Use the exact MCQ format.
+End with [STUDENT_REPLY_REQUIRED].
 """
         }
     ])
@@ -198,7 +192,6 @@ Base the MCQ strictly on this content:
     parsed = parse_mcq_from_text(gpt_reply)
 
     if not parsed:
-        logger.error("[ASK_PARAGRAPH][START] MCQ parse failed")
         raise HTTPException(status_code=500, detail="Failed to generate MCQ")
 
     tutor_state = {
@@ -227,11 +220,11 @@ Base the MCQ strictly on this content:
             "p_tutor_state": tutor_state
         }
     ).execute()
-
-    if not rpc or not rpc.data:
-        logger.error("[ASK_PARAGRAPH][START] RPC failed")
+    
+    if not rpc.data:
+        logger.error("[ASK_PARAGRAPH][START] RPC returned no data")
         raise HTTPException(status_code=500, detail="Failed to start session")
-
+    
     return rpc.data[0]
 
 
@@ -300,6 +293,13 @@ def is_mcq_answer(text: str) -> bool:
     )
 
 def generate_reinforcement(current_mcq: dict) -> str:
+    """
+    Generates post-mastery reinforcement:
+    - 10 high-yield exam facts
+    - 1 comparison table
+    Runs ONLY after FEEDBACK_CORRECT
+    """
+
     question = current_mcq.get("question", "")
     options = current_mcq.get("options", [])
 
@@ -311,6 +311,8 @@ You are a senior NEET-PG mentor.
 
 The student has JUST answered an MCQ correctly.
 
+Your task is FINAL EXAM REINFORCEMENT.
+
 ━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT FORMAT (STRICT)
 ━━━━━━━━━━━━━━━━━━━━━━
@@ -318,12 +320,14 @@ OUTPUT FORMAT (STRICT)
 [HIGH_YIELD_FACTS]
 • EXACTLY 10 bullet points
 • One line each
-• Exam-focused
+• Pure exam facts
+• No explanations
 
 [EXAM_COMPARISON_TABLE]
-• ONE markdown table
+• ONE table only
 • NEET-PG relevant
 • Minimal rows
+• Markdown table
 
 ━━━━━━━━━━━━━━━━━━━━━━
 RULES
@@ -332,6 +336,7 @@ RULES
 • DO NOT ask questions
 • DO NOT generate MCQs
 • DO NOT repeat the MCQ
+• DO NOT explain answers
 • Plain text only
 """
         },
@@ -343,19 +348,24 @@ MCQ QUESTION:
 
 OPTIONS:
 {options}
+
+Generate reinforcement.
 """
         }
     ])
 
 
 # ───────────────────────────────────────────────
-# CONTINUE CHAT (STUDENT → MENTOR)  ✅ PROD VERSION
+# CONTINUE CHAT (STUDENT → MENTOR) — DIAGNOSTIC BUILD
 # ───────────────────────────────────────────────
 @router.post("/chat")
 async def continue_chat(request: Request):
 
     logger.info("🚀 /chat ENTERED")
 
+    # ─────────────────────────────────────────
+    # PARSE REQUEST
+    # ─────────────────────────────────────────
     try:
         data = await request.json()
     except Exception:
@@ -366,9 +376,6 @@ async def continue_chat(request: Request):
     mcq_id = data.get("mcq_id")
     student_message = data.get("message", "")
 
-    if not student_id or not mcq_id:
-        raise HTTPException(status_code=400, detail="Missing student_id or mcq_id")
-
     logger.info(
         "👤 student_id=%s mcq_id=%s msg_len=%d",
         student_id,
@@ -376,9 +383,9 @@ async def continue_chat(request: Request):
         len(student_message or "")
     )
 
-    # ─────────────────────────────
+    # ─────────────────────────────────────────
     # FETCH SESSION
-    # ─────────────────────────────
+    # ─────────────────────────────────────────
     row = (
         supabase.table("student_mcq_session")
         .select("dialogs, tutor_state")
@@ -389,27 +396,31 @@ async def continue_chat(request: Request):
     )
 
     if not row.data:
+        logger.error("❌ Session not found")
         raise HTTPException(status_code=404, detail="Session not found")
 
     dialogs = row.data.get("dialogs") or []
     tutor_state = row.data.get("tutor_state") or {}
     current_mcq = tutor_state.get("current_mcq", {})
 
-    # 🔒 HARD STOP AFTER MASTERY
+    # 🔒 OPTIONAL HARD GUARD — prevent re-entry after mastery
     if tutor_state.get("status") == "mastered":
         return StreamingResponse(
             iter(["[SESSION_COMPLETED]"]),
             media_type="text/plain"
         )
 
-    # ─────────────────────────────
-    # MAIN GPT CALL
-    # ─────────────────────────────
+    # ─────────────────────────────────────────
+    # GPT CALL (MAIN TUTOR)
+    # ─────────────────────────────────────────
     try:
         reply = chat_with_gpt([
             {"role": "system", "content": SYSTEM_PROMPT},
             *get_active_mcq_context(dialogs),
-            {"role": "user", "content": student_message}
+            {
+                "role": "user",
+                "content": student_message
+            }
         ])
     except Exception:
         logger.exception("🔥 GPT failed")
@@ -419,10 +430,10 @@ async def continue_chat(request: Request):
 
     final_reply = reply
 
-    # ─────────────────────────────
-    # POST-MASTERY ENRICHMENT
-    # ─────────────────────────────
-    if reply.strip().startswith("[FEEDBACK_CORRECT]"):
+    # ─────────────────────────────────────────
+    # ✅ POST-MASTERY ENRICHMENT
+    # ─────────────────────────────────────────
+    if "[FEEDBACK_CORRECT]" in reply:
         logger.info("🏁 MCQ MASTERED")
 
         tutor_state["status"] = "mastered"
@@ -431,19 +442,19 @@ async def continue_chat(request: Request):
         try:
             reinforcement = generate_reinforcement(current_mcq)
         except Exception:
-            logger.exception("❌ Reinforcement failed")
+            logger.exception("❌ Reinforcement generation failed")
             reinforcement = ""
 
         final_reply = "[FEEDBACK_CORRECT]"
         if reinforcement:
             final_reply += "\n\n" + reinforcement
 
-    # ─────────────────────────────
-    # UPDATE STATE + DIALOGS (HARD GUARD)
-    # ─────────────────────────────
+    # ─────────────────────────────────────────
+    # UPDATE STATE + DIALOGS
+    # ─────────────────────────────────────────
     tutor_state["turns"] = (tutor_state.get("turns") or 0) + 1
 
-    rpc = supabase.rpc(
+    supabase.rpc(
         "upsert_mcq_session_v11",
         {
             "p_student_id": student_id,
@@ -457,13 +468,9 @@ async def continue_chat(request: Request):
         }
     ).execute()
 
-    if not rpc or not rpc.data:
-        logger.error("[ASK_PARAGRAPH][CHAT] RPC failed")
-        raise HTTPException(status_code=500, detail="Session update failed")
-
-    # ─────────────────────────────
-    # STREAM RESPONSE (SINGLE YIELD)
-    # ─────────────────────────────
+    # ─────────────────────────────────────────
+    # STREAM RESPONSE (SINGLE YIELD — FE SAFE)
+    # ─────────────────────────────────────────
     def event_generator():
         yield final_reply
         return
