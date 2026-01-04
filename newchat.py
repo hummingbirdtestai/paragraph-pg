@@ -105,7 +105,7 @@ WHEN STUDENT ANSWERS INCORRECTLY
 • Explain ONLY that gap
 • Generate a NEW MCQ targeting that gap
 • Provide 4 options (A–D)
-• DO NOT reveal the correct option
+• INCLUDE the correct option ONLY in a hidden line
 • End with [STUDENT_REPLY_REQUIRED]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -125,6 +125,7 @@ A. <option>
 B. <option>
 C. <option>
 D. <option>
+Correct: <A|B|C|D>
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT RULES (NON-NEGOTIABLE)
@@ -133,28 +134,30 @@ OUTPUT RULES (NON-NEGOTIABLE)
 • Plain text only
 • No explanations outside rules
 • No extra commentary
+• No deviation from format
 """
+
 
 
 import re
 
 def parse_mcq_from_text(text: str):
-    """
-    Extracts MCQ question, options, and correct answer from GPT output.
-    Returns None if parsing fails.
-    """
     try:
-        q = re.search(r"Question:\s*(.*)", text).group(1).strip()
-        options = re.findall(r"[A-D]\.\s*(.*)", text)
-        correct = re.search(r"Correct:\s*([A-D])", text).group(1)
+        q_match = re.search(r"Question:\s*(.+)", text)
+        options = re.findall(r"[A-D]\.\s*(.+)", text)
+        correct_match = re.search(
+            r"Correct\s*[:\-]\s*([A-D])",
+            text,
+            re.IGNORECASE
+        )
 
-        if len(options) != 4:
+        if not q_match or len(options) != 4 or not correct_match:
             return None
 
         return {
-            "question": q,
-            "options": options,
-            "correct_answer": correct
+            "question": q_match.group(1).strip(),
+            "options": [o.strip() for o in options],
+            "correct_answer": correct_match.group(1).upper()
         }
     except Exception:
         return None
@@ -175,20 +178,30 @@ async def start_session(request: Request):
         {
             "role": "user",
             "content": f"""
-Here is the MCQ the student wants to understand:
-
-{mcq_payload}
-
-Explain briefly, then generate ONE MCQ.
-Use the exact MCQ format.
-End with [STUDENT_REPLY_REQUIRED].
-"""
+    Generate EXACTLY ONE MCQ in the format below.
+    NO explanations before or after.
+    
+    [MCQ]
+    Question: <text>
+    A. <option>
+    B. <option>
+    C. <option>
+    D. <option>
+    Correct: <A|B|C|D>
+    
+    Base the MCQ on this content:
+    {mcq_payload}
+    
+    End with [STUDENT_REPLY_REQUIRED].
+    """
         }
     ])
+
 
     parsed = parse_mcq_from_text(gpt_reply)
 
     if not parsed:
+        logger.error("[ASK_PARAGRAPH][START] MCQ parse failed")
         raise HTTPException(status_code=500, detail="Failed to generate MCQ")
 
     tutor_state = {
@@ -217,13 +230,12 @@ End with [STUDENT_REPLY_REQUIRED].
             "p_tutor_state": tutor_state
         }
     ).execute()
-    
+
     if not rpc.data:
         logger.error("[ASK_PARAGRAPH][START] RPC returned no data")
         raise HTTPException(status_code=500, detail="Failed to start session")
-    
-    return rpc.data[0]
 
+    return rpc.data[0]
 
 
 # ───────────────────────────────────────────────
