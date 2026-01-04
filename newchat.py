@@ -1,70 +1,60 @@
 # ───────────────────────────────────────────────
-# NEWCHAT.PY
+# PART 1 — Imports & Logger
 # ───────────────────────────────────────────────
 
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
-import logging
-import time
+import logging, time, json
 
 from supabase_client import supabase
 from gpt_utils import chat_with_gpt
 
-from chat.state_extractor import detect_last_block, extract_state
-from chat.suggestion_engine import generate_suggestions
+router = APIRouter()
 
-# ───────────────────────────────────────────────
-# LOGGER SETUP
-# ───────────────────────────────────────────────
 logger = logging.getLogger("ask_paragraph")
 logger.setLevel(logging.INFO)
 
-router = APIRouter()
 
-# ───────────────────────────────────────────────
-# DIALOG NORMALIZER (GPT SAFETY GATE)
-# ───────────────────────────────────────────────
-def normalize_dialogs(dialogs):
-    """
-    Enforces GPT-safe dialog schema:
-    - skips system messages
-    - skips non-string content
-    - maps roles to OpenAI-compatible roles
-    """
-    safe = []
-    skipped = 0
-
-    for d in dialogs:
-        role = d.get("role")
-        content = d.get("content")
-
-        if role == "system":
-            skipped += 1
-            continue
-
-        if not isinstance(content, str):
-            skipped += 1
-            continue
-
-        safe.append({
-            "role": "assistant" if role == "assistant" else "user",
-            "content": content,
-        })
-
-    if skipped:
-        logger.warning(
-            "[ASK_PARAGRAPH][NORMALIZE] skipped=%d total=%d",
-            skipped,
-            len(dialogs),
-        )
-
-    return safe
+def log_time(tag, start):
+    logger.info("[ASK_PARAGRAPH][TIME][%s] %.2fs", tag, time.time() - start)
 
 
-# ───────────────────────────────────────────────
-# 🔒 VERBATIM SYSTEM PROMPT (DO NOT MODIFY)
-# ───────────────────────────────────────────────
-SYSTEM_PROMPT = """
+def safe_block_detect(text: str | None):
+    if not text:
+        return None
+    for b in [
+        "[FEEDBACK_CORRECT]",
+        "[FEEDBACK_WRONG]",
+        "[STUDENT_REPLY_REQUIRED]",
+        "[FINAL_ANSWER]"
+    ]:
+        if b in text:
+            return b
+    return None
+
+BEFORE STARTING ANY TEACHING:
+
+You MUST FIRST extract EXACTLY **3 core concepts** required to solve the given MCQ.
+
+• These must be prerequisite concepts necessary to solve the MCQ  
+• They must be ordered in a dependency chain  
+• Do NOT explain them yet  
+• Do NOT ask any MCQ yet  
+
+Output them ONCE in the following block ONLY:
+
+[CONCEPT_LIST]
+1. <Concept 1>
+2. <Concept 2>
+3. <Concept 3>
+
+After outputting [CONCEPT_LIST]:
+• Say: "I will start with Concept 1."
+• Then proceed with the teaching rules EXACTLY as defined below.
+• From this point onward, NEVER re-list the concepts again.
+
+────────────────────────────────────────────────────────
+
 You are a 30 Years Experienced NEETPG Teacher and AI Mentor tutoring a NEETPG aspirant to MASTER the concepts required to solve the given MCQ.
 
 Each MCQ has EXACTLY **3 core concepts** arranged in a dependency chain:
@@ -220,304 +210,154 @@ TABLE FORMATTING RULES (CRITICAL)
 • Header row MUST be followed immediately by |---|.
 • Do NOT add extra dashed lines or blank rows.
 • Do NOT break tables across blocks.
-"""
 
 # ───────────────────────────────────────────────
-# START / RESUME MCQ SESSION
+# PART 3 — START SESSION
 # ───────────────────────────────────────────────
+
 @router.post("/start")
 async def start_session(request: Request):
+    t0 = time.time()
     data = await request.json()
 
     student_id = data["student_id"]
     mcq_id = data["mcq_id"]
     mcq_payload = data["mcq_payload"]
 
-    logger.info(
-        f"[ASK_PARAGRAPH][START] student_id={student_id} mcq_id={mcq_id}"
-    )
+    logger.info("[START] student=%s mcq=%s", student_id, mcq_id)
 
+    # STEP 1: Ask GPT ONLY to extract 3 concepts
+    concept_prompt = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": f"""
+From the following MCQ, list EXACTLY 3 core concepts
+required to answer it. Return as JSON list only.
+
+MCQ:
+{mcq_payload}
+"""}
+    ]
+
+    raw = chat_with_gpt(concept_prompt)
+    concepts = json.loads(raw)
+
+    tutor_state = {
+        "phase": "concept_teaching",
+        "concept_pointer": 0,
+        "recursion_depth": 0,
+        "awaiting_mcq": True,
+        "last_block": None,
+        "turns": 0,
+        "concepts": [
+            {"title": c, "status": "pending"} for c in concepts
+        ]
+    }
+
+    # STEP 2: Start first concept teaching
     mentor_reply = chat_with_gpt([
         {"role": "system", "content": SYSTEM_PROMPT},
-        {
-            "role": "user",
-            "content": f"""
-Here is the MCQ the student is asking about:
+        {"role": "user", "content": f"""
+Teach this concept:
+{concepts[0]}
 
-{mcq_payload}
-
-Begin the discussion.
-"""
-        }
+Explain briefly and ask an MCQ.
+"""}
     ])
 
-    # ⬇️ ADD HERE — initialize teaching state
-    initial_tutor_state = {
-        "phase": "mcq_teaching",
-        "concept_index": 1,
-        "recursion_depth": 0,
-        "concept_mastered": False,
-        "turns": 0,
-        "last_block": "[STUDENT_REPLY_REQUIRED]"
-    }
+    supabase.rpc("upsert_mcq_session_v11", {
+        "p_student_id": student_id,
+        "p_mcq_id": mcq_id,
+        "p_mcq_payload": mcq_payload,
+        "p_new_dialogs": [{"role": "assistant", "content": mentor_reply}],
+        "p_tutor_state": tutor_state
+    }).execute()
 
-    logger.info(
-        f"[ASK_PARAGRAPH][START] Initial mentor reply generated "
-        f"(chars={len(mentor_reply)})"
-    )
-
-    rpc = supabase.rpc(
-        "upsert_mcq_session_v11",
-        {
-            "p_student_id": student_id,
-            "p_mcq_id": mcq_id,
-            "p_mcq_payload": mcq_payload,
-            "p_new_dialogs": [
-                {
-                    "role": "assistant",
-                    "content": mentor_reply,
-                    "mcq_payload": mcq_payload
-                }
-            ],
-            "p_tutor_state": initial_tutor_state
-        }
-    ).execute()
-
-    if not rpc.data:
-        logger.error(
-            f"[ASK_PARAGRAPH][START][ERROR] Failed to persist session"
-        )
-        raise HTTPException(status_code=500, detail="Failed to start MCQ session")
-
-    logger.info(
-        f"[ASK_PARAGRAPH][START] Session created successfully"
-    )
-
-    return rpc.data[0]
-
+    log_time("START", t0)
+    return {"status": "started"}
 
 # ───────────────────────────────────────────────
-# 🔥 LOAD EXISTING SESSION
+# PART 4 — CHAT LOOP (NO HALLUCINATION)
 # ───────────────────────────────────────────────
-@router.post("/session")
-async def get_session(request: Request):
-    data = await request.json()
-    session_id = data["session_id"]
 
-    logger.info(
-        f"[ASK_PARAGRAPH][SESSION] Fetch session_id={session_id}"
-    )
-
-    row = (
-        supabase.table("student_mcq_session")
-        .select("id, dialogs, tutor_state, next_suggestions")
-        .eq("id", session_id)
-        .limit(1)
-        .execute()
-    )
-
-    if not row.data:
-        logger.warning(
-            f"[ASK_PARAGRAPH][SESSION][404] Session not found session_id={session_id}"
-        )
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    logger.info(
-        f"[ASK_PARAGRAPH][SESSION] Loaded dialogs={len(row.data[0]['dialogs'])} "
-        f"turns={row.data[0]['tutor_state'].get('turns')}"
-    )
-
-    return {
-        "session_id": row.data[0]["id"],
-        "dialogs": row.data[0]["dialogs"],
-        "tutor_state": row.data[0]["tutor_state"],
-        "next_suggestions": row.data[0]["next_suggestions"],
-    }
-
-def get_active_mcq_context(dialogs, max_turns=4):
-    """
-    Returns only the most recent MCQ interaction
-    to prevent option & concept pollution.
-    """
-    filtered = []
-
-    # Walk backwards
-    for d in reversed(dialogs):
-        if d.get("role") == "assistant" and "[MCQ" in d.get("content", ""):
-            filtered.append(d)
-            break
-        filtered.append(d)
-
-    # Restore order and cap size
-    return normalize_dialogs(list(reversed(filtered))[-max_turns:])
-
-
-# ───────────────────────────────────────────────
-# CONTINUE CHAT (STUDENT → MENTOR)
-# ───────────────────────────────────────────────
 @router.post("/chat")
 async def continue_chat(request: Request):
-    start_time = time.time()
-
+    t0 = time.time()
     data = await request.json()
+
     student_id = data["student_id"]
     mcq_id = data["mcq_id"]
-    student_message = data["message"]
+    student_msg = data["message"]
 
-    logger.info(
-        "[ASK_PARAGRAPH][STUDENT_INPUT] raw='%s'",
-        student_message.strip(),
-    )
-
-    logger.info(
-        f"[ASK_PARAGRAPH][CHAT] student_id={student_id} mcq_id={mcq_id} "
-        f"message_len={len(student_message or '')}"
-    )
-
-    row = (
-        supabase.table("student_mcq_session")
-        .select("dialogs, tutor_state")
-        .eq("student_id", student_id)
-        .eq("mcq_id", mcq_id)
-        .single()
-        .execute()
-    )
-
-    if not row.data:
-        logger.warning(
-            f"[ASK_PARAGRAPH][CHAT][404] Session not found "
-            f"student_id={student_id} mcq_id={mcq_id}"
-        )
-        raise HTTPException(status_code=404, detail="Session not found")
+    row = supabase.table("student_mcq_session") \
+        .select("dialogs, tutor_state") \
+        .eq("student_id", student_id) \
+        .eq("mcq_id", mcq_id) \
+        .single().execute()
 
     dialogs = row.data["dialogs"]
-    tutor_state = row.data["tutor_state"] or {}
-    concept_index = tutor_state.get("concept_index", 1)
-    recursion_depth = tutor_state.get("recursion_depth", 0)
+    tutor_state = row.data["tutor_state"]
 
-    if tutor_state.get("last_block") == "[STUDENT_REPLY_REQUIRED]":
-        if not student_message or not student_message.strip():
-            raise HTTPException(
-                status_code=409,
-                detail="Student response required before proceeding"
-            )
-
-    mcq_payload = None
-    for d in dialogs:
-        if d["role"] == "assistant" and isinstance(d.get("mcq_payload"), dict):
-            mcq_payload = d["mcq_payload"]
-            break
-
-    mcq_context = ""
-    if mcq_payload:
-        mcq_context = f"""
-MCQ CONTEXT (DO NOT REPEAT VERBATIM):
-Stem: {mcq_payload.get("stem")}
-Options: {mcq_payload.get("options")}
-Correct Answer: {mcq_payload.get("correct_answer")}
-Feedback: {mcq_payload.get("feedback")}
-Learning Gap: {mcq_payload.get("learning_gap")}
-"""
+    concept_idx = tutor_state["concept_pointer"]
+    concept = tutor_state["concepts"][concept_idx]["title"]
 
     gpt_messages = [
-        {"role": "system", "content": SYSTEM_PROMPT}
+        {"role": "system", "content": SYSTEM_PROMPT},
+        *dialogs[-4:],
+        {"role": "user", "content": f"""
+Current concept: {concept}
+
+Student said:
+\"\"\"{student_msg}\"\"\"
+"""}
     ]
-    
-    if mcq_context:
-        gpt_messages.append({
-            "role": "user",
-            "content": mcq_context
-        })
-    
-    gpt_messages.extend(get_active_mcq_context(dialogs))
 
-    gpt_messages.append({
-        "role": "user",
-        "content": f"""
-Student response:
-\"\"\"{student_message}\"\"\"
+    def stream():
+        full = chat_with_gpt(gpt_messages)
+        yield full
 
-Decide whether this is:
-- an MCQ answer (letter or free text), OR
-- a question.
+        block = safe_block_detect(full)
 
-Follow all conversation rules strictly.
-"""
-    })
+        if block == "[FEEDBACK_CORRECT]":
+            tutor_state["concepts"][concept_idx]["status"] = "mastered"
+            tutor_state["concept_pointer"] += 1
+            tutor_state["recursion_depth"] = 0
 
-    logger.info(
-        "[ASK_PARAGRAPH][GPT_REPLAY] messages=%d chars≈%d",
-        len(gpt_messages),
-        sum(len(m["content"]) for m in gpt_messages),
-    )
+            if tutor_state["concept_pointer"] == 3:
+                tutor_state["phase"] = "final"
+        elif block == "[FEEDBACK_WRONG]":
+            tutor_state["recursion_depth"] += 1
 
-    def event_generator():
-        full_reply = ""
-    
-        try:
+        tutor_state["last_block"] = block
+        tutor_state["turns"] += 1
 
-            full_reply = chat_with_gpt(gpt_messages)
-            yield full_reply
+        supabase.rpc("upsert_mcq_session_v11", {
+            "p_student_id": student_id,
+            "p_mcq_id": mcq_id,
+            "p_mcq_payload": {},
+            "p_new_dialogs": [
+                {"role": "student", "content": student_msg},
+                {"role": "assistant", "content": full}
+            ],
+            "p_tutor_state": tutor_state
+        }).execute()
 
-    
-        finally:
-            if not full_reply:
-                full_reply = "[MENTOR]\nTemporary issue. Please retry."
-    
-            prev_block = tutor_state.get("last_block")
-            last_block = detect_last_block(full_reply)
-    
-            if tutor_state.get("recursion_depth", 0) > 5:
-                tutor_state["recursion_depth"] = 0
-    
-            if last_block == "[FEEDBACK_CORRECT]":
-                tutor_state["concept_index"] = min(
-                    tutor_state.get("concept_index", 1) + 1,
-                    3
-                )
-                tutor_state["recursion_depth"] = 0
-            
-            elif last_block == "[FEEDBACK_WRONG]":
-                tutor_state["recursion_depth"] += 1
+        log_time("CHAT", t0)
 
-    
-            tutor_state["last_block"] = last_block
-            tutor_state["turns"] = (tutor_state.get("turns", 0) or 0) + 1
-    
-            supabase.rpc(
-                "upsert_mcq_session_v11",
-                {
-                    "p_student_id": student_id,
-                    "p_mcq_id": mcq_id,
-                    "p_mcq_payload": {},
-                    "p_new_dialogs": [
-                        {"role": "student", "content": student_message},
-                        {"role": "assistant", "content": full_reply},
-                    ],
-                    "p_tutor_state": tutor_state,
-                }
-            ).execute()
-    
-            state = extract_state({
-                "dialogs": dialogs + [
-                    {"role": "student", "content": student_message},
-                    {"role": "assistant", "content": full_reply},
-                ],
-                "current_concept": tutor_state.get("concept_index"),
-            })
-    
-            suggestions = generate_suggestions(state)
-    
-            supabase.table("student_mcq_session").update(
-                {"next_suggestions": suggestions}
-            ).eq("student_id", student_id).eq("mcq_id", mcq_id).execute()
+    return StreamingResponse(stream(), media_type="text/plain")
 
+# ───────────────────────────────────────────────
+# PART 5 — FINAL SUMMARY
+# ───────────────────────────────────────────────
 
+def trigger_final_summary(dialogs):
+    return chat_with_gpt([
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": """
+All 3 concepts are mastered.
 
-    # ────────────────
-    # 🔧 SURGICAL NON-STREAMING EXECUTION
-    # ────────────────
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/plain"
-    )
+Now provide:
+1. [FINAL_ANSWER]
+2. [CONCEPT_TABLE]
+3. [TAKEAWAYS] (EXACTLY 5)
+"""}
+    ])
