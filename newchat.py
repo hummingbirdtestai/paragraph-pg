@@ -208,7 +208,7 @@ End with [STUDENT_REPLY_REQUIRED].
         "turns": 0
     }
 
-    supabase.rpc(
+    rpc = supabase.rpc(
         "upsert_mcq_session_v11",
         {
             "p_student_id": student_id,
@@ -220,8 +220,13 @@ End with [STUDENT_REPLY_REQUIRED].
             "p_tutor_state": tutor_state
         }
     ).execute()
-
+    
+    if not rpc.data:
+        logger.error("[ASK_PARAGRAPH][START] RPC returned no data")
+        raise HTTPException(status_code=500, detail="Failed to start session")
+    
     return rpc.data[0]
+
 
 
 # ───────────────────────────────────────────────
