@@ -292,9 +292,69 @@ def is_mcq_answer(text: str) -> bool:
         or len(t.split()) <= 3
     )
 
-# ───────────────────────────────────────────────
-# CONTINUE CHAT (STUDENT → MENTOR)
-# ───────────────────────────────────────────────
+def generate_reinforcement(current_mcq: dict) -> str:
+    """
+    Generates post-mastery reinforcement:
+    - 10 high-yield exam facts
+    - 1 comparison table
+    Runs ONLY after FEEDBACK_CORRECT
+    """
+
+    question = current_mcq.get("question", "")
+    options = current_mcq.get("options", [])
+
+    return chat_with_gpt([
+        {
+            "role": "system",
+            "content": """
+You are a senior NEET-PG mentor.
+
+The student has JUST answered an MCQ correctly.
+
+Your task is FINAL EXAM REINFORCEMENT.
+
+━━━━━━━━━━━━━━━━━━━━━━
+OUTPUT FORMAT (STRICT)
+━━━━━━━━━━━━━━━━━━━━━━
+
+[HIGH_YIELD_FACTS]
+• EXACTLY 10 bullet points
+• One line each
+• Pure exam facts
+• No explanations
+
+[EXAM_COMPARISON_TABLE]
+• ONE table only
+• NEET-PG relevant
+• Minimal rows
+• Markdown table
+
+━━━━━━━━━━━━━━━━━━━━━━
+RULES
+━━━━━━━━━━━━━━━━━━━━━━
+
+• DO NOT ask questions
+• DO NOT generate MCQs
+• DO NOT repeat the MCQ
+• DO NOT explain answers
+• Plain text only
+"""
+        },
+        {
+            "role": "user",
+            "content": f"""
+MCQ QUESTION:
+{question}
+
+OPTIONS:
+{options}
+
+Generate reinforcement.
+"""
+        }
+    ])
+
+
 # ───────────────────────────────────────────────
 # CONTINUE CHAT (STUDENT → MENTOR) — DIAGNOSTIC BUILD
 # ───────────────────────────────────────────────
@@ -303,11 +363,13 @@ async def continue_chat(request: Request):
 
     logger.info("🚀 /chat ENTERED")
 
+    # ─────────────────────────────────────────
+    # PARSE REQUEST
+    # ─────────────────────────────────────────
     try:
         data = await request.json()
-        logger.info("📥 Request JSON parsed")
     except Exception:
-        logger.exception("❌ Failed to parse request JSON")
+        logger.exception("❌ Invalid JSON")
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
     student_id = data.get("student_id")
@@ -324,8 +386,6 @@ async def continue_chat(request: Request):
     # ─────────────────────────────────────────
     # FETCH SESSION
     # ─────────────────────────────────────────
-    logger.info("🧠 Fetching session from Supabase")
-
     row = (
         supabase.table("student_mcq_session")
         .select("dialogs, tutor_state")
@@ -336,20 +396,24 @@ async def continue_chat(request: Request):
     )
 
     if not row.data:
-        logger.error("❌ Session NOT FOUND")
+        logger.error("❌ Session not found")
         raise HTTPException(status_code=404, detail="Session not found")
-
-    logger.info("✅ Supabase session fetched")
 
     dialogs = row.data.get("dialogs") or []
     tutor_state = row.data.get("tutor_state") or {}
+    current_mcq = tutor_state.get("current_mcq", {})
+
+    # 🔒 OPTIONAL HARD GUARD — prevent re-entry after mastery
+    if tutor_state.get("status") == "mastered":
+        return StreamingResponse(
+            iter(["[SESSION_COMPLETED]"]),
+            media_type="text/plain"
+        )
 
     # ─────────────────────────────────────────
-    # GPT CALL
+    # GPT CALL (MAIN TUTOR)
     # ─────────────────────────────────────────
     try:
-        logger.info("🤖 Calling chat_with_gpt")
-
         reply = chat_with_gpt([
             {"role": "system", "content": SYSTEM_PROMPT},
             *get_active_mcq_context(dialogs),
@@ -358,49 +422,58 @@ async def continue_chat(request: Request):
                 "content": student_message
             }
         ])
-
-        logger.info("🤖 GPT returned reply_len=%d", len(reply))
-
     except Exception:
-        logger.exception("🔥 GPT FAILED")
+        logger.exception("🔥 GPT failed")
         reply = "[MENTOR]\nTemporary issue. Please retry."
 
+    logger.info("🤖 GPT reply_len=%d", len(reply))
+
+    final_reply = reply
+
     # ─────────────────────────────────────────
-    # UPDATE STATE
+    # ✅ POST-MASTERY ENRICHMENT
+    # ─────────────────────────────────────────
+    if "[FEEDBACK_CORRECT]" in reply:
+        logger.info("🏁 MCQ MASTERED")
+
+        tutor_state["status"] = "mastered"
+        tutor_state["awaiting_answer"] = False
+
+        try:
+            reinforcement = generate_reinforcement(current_mcq)
+        except Exception:
+            logger.exception("❌ Reinforcement generation failed")
+            reinforcement = ""
+
+        final_reply = "[FEEDBACK_CORRECT]"
+        if reinforcement:
+            final_reply += "\n\n" + reinforcement
+
+    # ─────────────────────────────────────────
+    # UPDATE STATE + DIALOGS
     # ─────────────────────────────────────────
     tutor_state["turns"] = (tutor_state.get("turns") or 0) + 1
 
-    logger.info("💾 Writing session update to Supabase")
-
-    try:
-        supabase.rpc(
-            "upsert_mcq_session_v11",
-            {
-                "p_student_id": student_id,
-                "p_mcq_id": mcq_id,
-                "p_mcq_payload": {},
-                "p_new_dialogs": [
-                    {"role": "student", "content": student_message},
-                    {"role": "assistant", "content": reply},
-                ],
-                "p_tutor_state": tutor_state,
-            }
-        ).execute()
-
-        logger.info("✅ Supabase write completed")
-
-    except Exception:
-        logger.exception("❌ Supabase write FAILED")
+    supabase.rpc(
+        "upsert_mcq_session_v11",
+        {
+            "p_student_id": student_id,
+            "p_mcq_id": mcq_id,
+            "p_mcq_payload": {},
+            "p_new_dialogs": [
+                {"role": "student", "content": student_message},
+                {"role": "assistant", "content": final_reply},
+            ],
+            "p_tutor_state": tutor_state,
+        }
+    ).execute()
 
     # ─────────────────────────────────────────
-    # STREAM RESPONSE (FE-SAFE)
+    # STREAM RESPONSE (SINGLE YIELD — FE SAFE)
     # ─────────────────────────────────────────
     def event_generator():
-        logger.info("📤 Streaming reply to FE")
-        yield reply
-        logger.info("🧨 Stream completed")
-
-    logger.info("📡 Returning StreamingResponse")
+        yield final_reply
+        return
 
     return StreamingResponse(
         event_generator(),
