@@ -5,6 +5,7 @@ from datetime import datetime
 from supabase_client import call_rpc, supabase
 from gpt_utils import chat_with_gpt
 from newchat import router as newchat_router
+from newchat_onlinembbs import router as newchat_onlinembbs_router
 from payments import router as payments_router
 import json
 from notify import router as notify_router
@@ -48,6 +49,7 @@ app.add_middleware(
 # THEN routers
 app.include_router(notify_router)
 app.include_router(newchat_router, prefix="/ask-paragraph")
+app.include_router(newchat_onlinembbs_router, prefix="/ask-paragraph-mbbs")
 app.include_router(payments_router)
 
 # ───────────────────────────────────────────────
@@ -410,6 +412,7 @@ async def resolve_mcq(request: Request):
 @app.get("/")
 def home():
     return {"message": "🧠 Review flow now includes seq_num & total_count + Resolve MCQ Intent Added ✅"}
+
 
 
 
