@@ -1,19 +1,52 @@
+# main_onlinembbs.py
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import logging
+
 from newchat_onlinembbs import router as mbbs_router
 
-app = FastAPI(title="Paragraph MBBS API")
+# ───────────────────────────────────────────────
+# LOGGING (match old service)
+# ───────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+
+logging.getLogger("ask_paragraph").setLevel(logging.DEBUG)
+
+# ───────────────────────────────────────────────
+# FASTAPI APP
+# ───────────────────────────────────────────────
+app = FastAPI(
+    title="Ask Paragraph MBBS API",
+    version="1.0.0",
+)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],   # tighten later if needed
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.include_router(mbbs_router, prefix="/ask-paragraph-mbbs")
+# ───────────────────────────────────────────────
+# ROUTERS
+# ───────────────────────────────────────────────
+app.include_router(
+    mbbs_router,
+    prefix="/ask-paragraph-mbbs",
+    tags=["MBBS Diagnostic Tutor"],
+)
 
+# ───────────────────────────────────────────────
+# HEALTH
+# ───────────────────────────────────────────────
 @app.get("/")
 def health():
-    return {"status": "MBBS service running"}
+    return {
+        "service": "ask-paragraph-mbbs",
+        "status": "running"
+    }
