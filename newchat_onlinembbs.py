@@ -533,6 +533,7 @@ End with [STUDENT_REPLY_REQUIRED].
                 "[FEEDBACK_CORRECT]\n\n"
                 + concept_recap
                 + ("\n\n" + exam_reinforcement if exam_reinforcement else "")
+                + "\n\n[SESSION_COMPLETED]"
             )
 
 
