@@ -300,7 +300,7 @@ async def get_session(request: Request):
         "next_suggestions": row.data[0]["next_suggestions"],
     }
 
-def get_active_mcq_context(dialogs, max_turns=4):
+def get_active_mcq_context(dialogs, max_turns=12):
     """
     Returns only the most recent MCQ interaction
     to prevent option & concept pollution.
