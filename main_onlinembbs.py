@@ -2,6 +2,7 @@
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from payments import router as payments_router
 import logging
 
 from newchat_onlinembbs import router as mbbs_router
@@ -40,6 +41,9 @@ app.include_router(
     prefix="/ask-paragraph-mbbs",
     tags=["MBBS Diagnostic Tutor"],
 )
+
+# Payments (Cashfree webhooks + initiate)
+app.include_router(payments_router)
 
 # ───────────────────────────────────────────────
 # HEALTH
