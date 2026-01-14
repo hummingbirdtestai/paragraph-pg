@@ -249,7 +249,7 @@ async def get_payment_status(order_id: str):
     }
 
 # ───────────────────────────────────────────────
-# CASHFREE WEBHOOK (PRODUCTION SAFE)
+# CASHFREE WEBHOOK (FINAL – ONLY ONE)
 # ───────────────────────────────────────────────
 
 @router.options("/webhook")
@@ -266,62 +266,39 @@ async def cashfree_webhook(request: Request):
     raw_body = await request.body()
     logger.info(f"Raw body: {raw_body.decode(errors='ignore')}")
 
-    # ────────────────
-    # Parse payload
-    # ────────────────
+    # Parse JSON
     try:
         import json
         payload = json.loads(raw_body)
     except Exception:
-        logger.error("❌ Invalid JSON payload")
         return {"status": "invalid_json"}
 
-    # ────────────────
-    # Signature validation
-    # ────────────────
     signature = request.headers.get("x-webhook-signature")
     timestamp = request.headers.get("x-webhook-timestamp")
 
-    if not signature:
-        logger.error("❌ Missing x-webhook-signature")
-        return {"status": "missing_signature"}
-
-    if not timestamp:
-        logger.error("❌ Missing x-webhook-timestamp")
-        return {"status": "missing_timestamp"}
+    if not signature or not timestamp:
+        return {"status": "missing_signature_or_timestamp"}
 
     if not verify_webhook_signature(raw_body, timestamp, signature):
-        logger.error("❌ Signature mismatch")
         return {"status": "signature_mismatch"}
 
-    # ────────────────
-    # Event type
-    # ────────────────
     event = payload.get("type")
 
-    # ✅ VERY IMPORTANT: Ignore Cashfree test webhook
+    # ✅ Ignore Cashfree test webhook
     if event == "WEBHOOK":
-        logger.info("🧪 Cashfree test webhook received – safely ignored")
+        logger.info("🧪 Cashfree test webhook ignored")
         return {"status": "test_webhook_ignored"}
 
-    # ────────────────
-    # Extract order safely
-    # ────────────────
     order = payload.get("data", {}).get("order")
     if not order:
-        logger.warning("⚠️ Missing order object in webhook payload")
         return {"status": "ignored_no_order"}
 
     order_id = order.get("order_id")
     if not order_id:
-        logger.warning("⚠️ Missing order_id in webhook payload")
         return {"status": "ignored_no_order_id"}
 
     logger.info(f"[WEBHOOK] Event={event} Order={order_id}")
 
-    # ────────────────
-    # Fetch order safely (NO .single())
-    # ────────────────
     order_row = (
         supabase.table("payment_orders")
         .select("*")
@@ -332,16 +309,11 @@ async def cashfree_webhook(request: Request):
     )
 
     if not order_row:
-        logger.warning(f"⚠️ Order not found in DB: {order_id}")
         return {"status": "order_not_found"}
 
     if order_row["status"] == "paid":
-        logger.info(f"ℹ️ Order already processed: {order_id}")
         return {"status": "already_processed"}
 
-    # ────────────────
-    # PAYMENT SUCCESS
-    # ────────────────
     if event in ("PAYMENT_SUCCESS", "PAYMENT_SUCCESS_WEBHOOK"):
         student_id = order_row["student_id"]
         plan = order_row["plan"]
@@ -356,34 +328,23 @@ async def cashfree_webhook(request: Request):
 
         supabase.table("users").update({
             "mbbs_is_paid": True,
-            "mbbs_paid_activated_at": starts_at.isoformat(),
             "mbbs_subscription_start_at": starts_at.isoformat(),
             "mbbs_subscription_end_at": ends_at.isoformat(),
             "mbbs_purchased_package": plan,
-            "mbbs_package_price": PRICING_MAP[plan],
             "mbbs_amount_paid": order_row["amount"],
-            "mbbs_coupon_code": order_row["coupon_code"],
         }).eq("id", student_id).execute()
 
-        logger.info(f"✅ Subscription activated for student {student_id}")
         return {"status": "subscription_activated"}
 
-    # ────────────────
-    # PAYMENT FAILED
-    # ────────────────
     if event == "PAYMENT_FAILED":
         supabase.table("payment_orders").update({
             "status": "failed"
         }).eq("order_id", order_id).execute()
 
-        logger.info(f"❌ Payment failed for order {order_id}")
         return {"status": "payment_failed"}
 
-    # ────────────────
-    # Other events
-    # ────────────────
-    logger.info(f"ℹ️ Webhook event ignored: {event}")
     return {"status": "ignored"}
+
 
 
 @router.post("/preview")
