@@ -287,6 +287,10 @@ async def cashfree_webhook(request: Request):
 
 
     event = payload.get("type")
+    # ✅ Ignore Cashfree test webhook
+    if event == "WEBHOOK":
+        logger.info("🧪 Cashfree test webhook received – ignoring safely")
+        return {"status": "test_webhook_ignored"}
     order = payload.get("data", {}).get("order", {})
 
     order_id = order.get("order_id")
