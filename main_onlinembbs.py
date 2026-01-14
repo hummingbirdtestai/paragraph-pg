@@ -2,13 +2,14 @@
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from payments import router as payments_router
 import logging
 
+# ✅ IMPORTANT: import the MBBS-specific payments router
+from payments_onlinembbs import router as payments_onlinembbs_router
 from newchat_onlinembbs import router as mbbs_router
 
 # ───────────────────────────────────────────────
-# LOGGING (match old service)
+# LOGGING
 # ───────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
@@ -16,6 +17,7 @@ logging.basicConfig(
 )
 
 logging.getLogger("ask_paragraph").setLevel(logging.DEBUG)
+logging.getLogger("payments").setLevel(logging.INFO)
 
 # ───────────────────────────────────────────────
 # FASTAPI APP
@@ -25,9 +27,12 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# ───────────────────────────────────────────────
+# CORS
+# ───────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # tighten later if needed
+    allow_origins=["*"],  # tighten later
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -36,21 +41,26 @@ app.add_middleware(
 # ───────────────────────────────────────────────
 # ROUTERS
 # ───────────────────────────────────────────────
+
+# MBBS Tutor / Chat
 app.include_router(
     mbbs_router,
     prefix="/ask-paragraph-mbbs",
     tags=["MBBS Diagnostic Tutor"],
 )
 
-# Payments (Cashfree webhooks + initiate)
-app.include_router(payments_router)
+# ✅ MBBS Payments ONLY (Cashfree)
+app.include_router(
+    payments_onlinembbs_router,
+    tags=["MBBS Payments"],
+)
 
 # ───────────────────────────────────────────────
-# HEALTH
+# HEALTH CHECK
 # ───────────────────────────────────────────────
 @app.get("/")
 def health():
     return {
         "service": "ask-paragraph-mbbs",
-        "status": "running"
+        "status": "running",
     }
