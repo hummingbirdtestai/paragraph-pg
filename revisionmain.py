@@ -93,7 +93,7 @@ def start_revision(payload: StartRevisionRequest):
 
     rpc = supabase.rpc(
         "get_topic_content_v1",
-        {"topic_id": payload.topic_id}
+        {"p_topic_id": payload.topic_id}
     ).execute()
 
     if not rpc.data:
