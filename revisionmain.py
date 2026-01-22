@@ -100,7 +100,7 @@ def start_revision(payload: StartRevisionRequest):
         log.error("❌ No data returned from RPC")
         raise HTTPException(status_code=404, detail="Topic not found")
 
-    data = rpc.data[0]["get_topic_content_v1"]
+    data = rpc.data
 
     concepts = data.get("concept_json", [])
     mcqs = data.get("concept_mcq_json", [])
