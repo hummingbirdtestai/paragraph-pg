@@ -1,7 +1,7 @@
 # revisionmainonlinembbs.py
 # ---------------------------------------------------------
-# Concept → MCQ Revision Orchestrator (DEBUG ENABLED)
-# In-memory | Frontend-timer driven | No persistence
+# Concept + MCQ Revision Orchestrator (PROD, DETERMINISTIC)
+# In-memory | Stateless frontend | No phase alternation
 # ---------------------------------------------------------
 
 from fastapi import FastAPI, HTTPException
@@ -61,7 +61,7 @@ class StartRevisionRequest(BaseModel):
 
 class NextStepRequest(BaseModel):
     session_id: str
-    event: Optional[str] = None   # timer_elapsed | answered | continue
+    event: Optional[str] = None
 
 
 class SubmitAnswerRequest(BaseModel):
@@ -81,7 +81,7 @@ def health():
 
 
 # ---------------------------------------------------------
-# START REVISION
+# START REVISION (SEND CONCEPT + MCQ)
 # ---------------------------------------------------------
 
 @app.post("/revision/start")
@@ -118,32 +118,33 @@ def start_revision(payload: StartRevisionRequest):
         "concepts": concepts,
         "mcqs": mcqs,
         "current_index": 0,
-        "phase": "concept",   # concept | mcq | complete
         "answers": [],
         "started_at": start_ts,
     }
 
     log.info(f"🧠 Session created: {session_id}")
-    log.info("📤 Sending FIRST CONCEPT")
+    log.info("📤 Sending FIRST CONCEPT + MCQ (paired)")
 
     return {
         "session_id": session_id,
-        "type": "concept",
+        "type": "concept_mcq",
         "index": 0,
-        "payload": concepts[0],
+        "payload": {
+            "concept": concepts[0],
+            "mcq": mcqs[0] if mcqs else None,
+        },
         "total_concepts": len(concepts),
     }
 
 
 # ---------------------------------------------------------
-# NEXT STEP (TIMER / UI DRIVEN)
+# NEXT STEP (ALWAYS SEND CURRENT INDEX PAIR)
 # ---------------------------------------------------------
 
 @app.post("/revision/next")
 def next_step(payload: NextStepRequest):
     log.info("⏭️ /revision/next called")
     log.info(f"🆔 session_id: {payload.session_id}")
-    log.info(f"📟 event: {payload.event}")
 
     session = REVISION_SESSIONS.get(payload.session_id)
 
@@ -152,78 +153,45 @@ def next_step(payload: NextStepRequest):
         raise HTTPException(status_code=404, detail="Session expired")
 
     idx = session["current_index"]
-    phase = session["phase"]
+    concepts = session["concepts"]
+    mcqs = session["mcqs"]
 
     log.info(f"📍 Current index: {idx}")
-    log.info(f"🔄 Current phase: {phase}")
 
-    # -------------------------------------------------
-    # CONCEPT → MCQ
-    # -------------------------------------------------
-    if phase == "concept":
-        log.info("➡️ Transition: CONCEPT → MCQ")
+    # -------------------------------
+    # COMPLETE
+    # -------------------------------
+    if idx >= len(concepts):
+        correct = sum(1 for a in session["answers"] if a["correct"])
+        incorrect = sum(1 for a in session["answers"] if not a["correct"])
 
-        if idx >= len(session["mcqs"]):
-            log.error("❌ MCQ missing for this concept index")
-            raise HTTPException(status_code=400, detail="MCQ missing")
-
-        session["phase"] = "mcq"
-
-        log.info(f"📤 Sending MCQ #{idx}")
+        log.info("🏁 SESSION COMPLETE")
+        log.info(f"✅ Correct: {correct} | ❌ Incorrect: {incorrect}")
 
         return {
-            "type": "mcq",
-            "index": idx,
-            "payload": session["mcqs"][idx],
+            "type": "complete",
+            "summary": {
+                "total_concepts": len(concepts),
+                "mcqs_attempted": len(session["answers"]),
+                "correct": correct,
+                "incorrect": incorrect,
+            },
         }
 
-    # -------------------------------------------------
-    # MCQ → NEXT CONCEPT or COMPLETE
-    # -------------------------------------------------
-    if phase == "mcq":
-        log.info("➡️ Transition: MCQ → NEXT")
+    log.info(f"📤 Sending CONCEPT + MCQ pair for index {idx}")
 
-        session["current_index"] += 1
-        idx = session["current_index"]
-
-        log.info(f"📍 Incremented index to {idx}")
-
-        if idx >= len(session["concepts"]):
-            session["phase"] = "complete"
-
-            correct = sum(1 for a in session["answers"] if a["correct"])
-            incorrect = sum(1 for a in session["answers"] if not a["correct"])
-
-            log.info("🏁 SESSION COMPLETE")
-            log.info(f"✅ Correct answers: {correct}")
-            log.info(f"❌ Incorrect answers: {incorrect}")
-
-            return {
-                "type": "complete",
-                "summary": {
-                    "total_concepts": len(session["concepts"]),
-                    "mcqs_attempted": len(session["answers"]),
-                    "correct": correct,
-                    "incorrect": incorrect,
-                },
-            }
-
-        session["phase"] = "concept"
-
-        log.info(f"📤 Sending NEXT CONCEPT #{idx}")
-
-        return {
-            "type": "concept",
-            "index": idx,
-            "payload": session["concepts"][idx],
-        }
-
-    log.warning("⚠️ Unknown phase reached")
-    return {"type": "idle"}
+    return {
+        "type": "concept_mcq",
+        "index": idx,
+        "payload": {
+            "concept": concepts[idx],
+            "mcq": mcqs[idx] if idx < len(mcqs) else None,
+        },
+    }
 
 
 # ---------------------------------------------------------
-# SUBMIT MCQ ANSWER
+# SUBMIT MCQ ANSWER (ADVANCES INDEX)
 # ---------------------------------------------------------
 
 @app.post("/revision/answer")
@@ -257,7 +225,11 @@ def submit_answer(payload: SubmitAnswerRequest):
         "concept_value": mcq.get("concept_value"),
     })
 
-    log.info(f"✅ Answer recorded | correct={is_correct}")
+    session["current_index"] += 1
+
+    log.info(
+        f"✅ Answer recorded | correct={is_correct} | next_index={session['current_index']}"
+    )
 
     return {
         "status": "recorded",
