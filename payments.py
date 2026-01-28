@@ -49,6 +49,12 @@ PRICING_MAP = {
     "12": 36000,
 }
 
+FIXED_PLAN = {
+    "code": "30D",
+    "amount": 2000,
+    "months": 1,
+}
+
 PLAN_MONTHS = {
     "3": 3,
     "6": 6,
@@ -216,6 +222,66 @@ async def initiate_payment(request: Request):
         "status": "initiated"
     }
 
+@router.post("/initiate-fixed")
+async def initiate_fixed_payment(request: Request):
+    ensure_cashfree_config()
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    student_id = body.get("student_id")
+
+    if not student_id:
+        raise HTTPException(status_code=400, detail="student_id required")
+
+    user = (
+        supabase.table("users")
+        .select("name, phone, email")
+        .eq("id", student_id)
+        .single()
+        .execute()
+        .data
+    )
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    order_id = f"order_{uuid4().hex[:14]}"
+    amount = FIXED_PLAN["amount"]
+
+    try:
+        cf_order = create_cashfree_order(order_id, amount, user)
+    except Exception as e:
+        logger.error(f"[CASHFREE] Fixed plan order failed: {str(e)}")
+        raise HTTPException(status_code=502, detail="Payment gateway unavailable")
+
+    payment_session_id = cf_order.get("payment_session_id")
+
+    if not payment_session_id:
+        raise HTTPException(status_code=500, detail="Failed to generate payment session")
+
+    supabase.table("payment_orders").insert({
+        "order_id": order_id,
+        "student_id": student_id,
+        "student_name": user["name"],
+        "student_phone": user["phone"],
+        "student_email": user["email"],
+        "plan": FIXED_PLAN["code"],
+        "amount": amount,
+        "coupon_code": None,
+        "status": "initiated",
+    }).execute()
+
+    return {
+        "order_id": order_id,
+        "amount": amount,
+        "payment_session_id": payment_session_id,
+        "currency": "INR",
+        "status": "initiated"
+    }
+
 # ───────────────────────────────────────────────
 # STATUS PAYMENT
 # ───────────────────────────────────────────────
@@ -315,14 +381,19 @@ async def cashfree_webhook(request: Request):
         }).eq("order_id", order_id).execute()
 
         starts_at = datetime.utcnow()
-        ends_at = starts_at + timedelta(days=30 * PLAN_MONTHS[plan])
+        
+        if plan in PLAN_MONTHS:
+            ends_at = starts_at + timedelta(days=30 * PLAN_MONTHS[plan])
+        else:
+            # Fixed 30-day plan (₹2000 Home CTA)
+            ends_at = starts_at + timedelta(days=30)
 
         supabase.table("users").update({
             "is_paid": True,
             "paid_activated_at": starts_at.isoformat(),
             "subscribed_at": starts_at.isoformat(),
             "purchased_package": plan,
-            "package_price": PRICING_MAP[plan],
+            "package_price": order_row["amount"],
             "amount_paid": order_row["amount"],
             "subscription_start_at": starts_at.isoformat(),
             "subscription_end_at": ends_at.isoformat(),
