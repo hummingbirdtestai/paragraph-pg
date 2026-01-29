@@ -125,7 +125,7 @@ import hashlib
 import base64
 
 def verify_webhook_signature(raw_body: bytes, timestamp: str, signature: str):
-    message = timestamp.encode() + raw_body   # ❗ NO DOT
+    message = f"{timestamp}.{raw_body.decode()}".encode()
 
     digest = hmac.new(
         CASHFREE_SECRET_KEY.encode(),
