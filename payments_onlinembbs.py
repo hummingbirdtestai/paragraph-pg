@@ -327,11 +327,15 @@ async def cashfree_webhook(request: Request):
         ends_at = starts_at + timedelta(days=30 * PLAN_MONTHS[plan])
 
         supabase.table("users").update({
-            "mbbs_is_paid": True,
-            "mbbs_subscription_start_at": starts_at.isoformat(),
-            "mbbs_subscription_end_at": ends_at.isoformat(),
-            "mbbs_purchased_package": plan,
-            "mbbs_amount_paid": order_row["amount"],
+            "is_paid": True,
+            "is_active": True,
+            "paid_activated_at": datetime.utcnow().isoformat(),
+            "subscribed_at": datetime.utcnow().isoformat(),
+            "subscription_start_at": starts_at.isoformat(),
+            "subscription_end_at": ends_at.isoformat(),
+            "purchased_package": plan,
+            "amount_paid": order_row["amount"],
+            "subscribed_coupon_code": order_row["coupon_code"],
         }).eq("id", student_id).execute()
 
         return {"status": "subscription_activated"}
