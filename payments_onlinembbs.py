@@ -242,10 +242,18 @@ async def get_payment_status(order_id: str):
         raise HTTPException(status_code=502, detail="Unable to verify payment")
 
     data = res.json()
-
+    raw_status = data.get("order_status")
+    
+    if raw_status == "PAID":
+        normalized = "SUCCESS"
+    elif raw_status in ("TERMINATED", "EXPIRED"):
+        normalized = "FAILED"
+    else:
+        normalized = "PENDING"
+    
     return {
         "order_id": order_id,
-        "order_status": data.get("order_status")  # SUCCESS | FAILED | CANCELLED | PENDING
+        "order_status": normalized
     }
 
 # ───────────────────────────────────────────────
@@ -303,13 +311,24 @@ async def cashfree_webhook(request: Request):
         supabase.table("payment_orders")
         .select("*")
         .eq("order_id", order_id)
+        .eq("product", PRODUCT)
         .maybe_single()
         .execute()
         .data
     )
-
+    
     if not order_row:
         return {"status": "order_not_found"}
+    
+    # 🔒 Amount validation (anti-tampering)
+    cf_amount = int(order.get("order_amount", 0))
+    db_amount = int(order_row["amount"])
+    
+    if cf_amount != db_amount:
+        logger.error(
+            f"[WEBHOOK] Amount mismatch for {order_id}: cf={cf_amount}, db={db_amount}"
+        )
+        return {"status": "amount_mismatch"}
 
     if order_row["status"] == "paid":
         return {"status": "already_processed"}
@@ -334,6 +353,7 @@ async def cashfree_webhook(request: Request):
             "subscription_start_at": starts_at.isoformat(),
             "subscription_end_at": ends_at.isoformat(),
             "purchased_package": plan,
+            "package_price": PRICING_MAP[plan],  # ✅ ADD THIS
             "amount_paid": order_row["amount"],
             "subscribed_coupon_code": order_row["coupon_code"],
         }).eq("id", student_id).execute()
@@ -347,9 +367,15 @@ async def cashfree_webhook(request: Request):
 
         return {"status": "payment_failed"}
 
+    if event in ("PAYMENT_CANCELLED", "PAYMENT_USER_DROPPED"):
+        supabase.table("payment_orders").update({
+            "status": "cancelled"
+        }).eq("order_id", order_id).execute()
+    
+        return {"status": "payment_cancelled"}
+    
+    logger.warning(f"[WEBHOOK] Ignored event={event} order={order_id}")
     return {"status": "ignored"}
-
-
 
 @router.post("/preview")
 async def preview_payment(request: Request):
