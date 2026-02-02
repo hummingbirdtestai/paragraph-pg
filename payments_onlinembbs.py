@@ -71,19 +71,32 @@ def apply_coupon(amount: int, coupon_code: str | None):
         .select("*")
         .eq("code", coupon_code)
         .eq("is_active", True)
-        .eq("is_redeemed", False)
         .execute()
     )
 
     if not res.data:
-        logger.warning(f"[COUPON] Invalid coupon: {coupon_code}")
         raise HTTPException(status_code=400, detail="Invalid or expired coupon")
 
     coupon = res.data[0]
-    discount_percent = coupon["discount_percent"]
-    discount = int(amount * discount_percent / 100)
-    final_amount = max(amount - discount, 0)
 
+    if coupon.get("is_redeemed"):
+        raise HTTPException(status_code=400, detail="Coupon already used")
+
+    # 🔐 Plan / price binding
+    if coupon.get("package_price") and coupon["package_price"] != amount:
+        raise HTTPException(
+            status_code=400,
+            detail="Coupon not valid for selected plan"
+        )
+
+    # ✅ Fixed amount OR percent
+    if coupon.get("discount_amount") is not None:
+        discount = int(coupon["discount_amount"])
+    else:
+        discount_percent = coupon.get("discount_percent", 0)
+        discount = int(amount * discount_percent / 100)
+
+    final_amount = max(amount - discount, 0)
     return final_amount, coupon
 
 
@@ -358,6 +371,20 @@ async def cashfree_webhook(request: Request):
             "subscribed_coupon_code": order_row["coupon_code"],
         }).eq("id", student_id).execute()
 
+        # ✅ MARK COUPON AS REDEEMED
+        if order_row.get("coupon_code"):
+            supabase.table("coupons").update({
+                "is_redeemed": True,
+                "redeemed_at": datetime.utcnow().isoformat(),
+                "redeemed_by_user_id": student_id,
+                "subscription_start_at": starts_at.isoformat(),
+                "subscription_end_at": ends_at.isoformat(),
+                "purchased_package": plan,
+                "package_price": PRICING_MAP[plan],
+                "amount_paid": order_row["amount"],
+                "product": PRODUCT,
+            }).eq("code", order_row["coupon_code"]).execute()
+
         return {"status": "subscription_activated"}
 
     if event == "PAYMENT_FAILED":
@@ -398,8 +425,8 @@ async def preview_payment(request: Request):
         # Invalid coupon
         raise e
 
-    discount_percent = coupon["discount_percent"] if coupon else 0
-    discount_amount = base_amount - final_amount
+    discount_percent = coupon["discount_percent"] if coupon and coupon.get("discount_percent") else None
+    discount_amount = coupon["discount_amount"] if coupon and coupon.get("discount_amount") else (base_amount - final_amount)
 
     return {
         "base_amount": base_amount,
