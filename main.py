@@ -41,6 +41,7 @@ app.add_middleware(
         # 🔥 THIS IS MANDATORY FOR YOUR CURRENT ERROR
         "https://zp1v56uxy8rdx5ypatb0ockcb9tr6a-oci3--8081--365214aa.local-credentialless.webcontainer-api.io",
     ],
+    allow_origin_regex="https://.*\.local-credentialless\.webcontainer-api\.io",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -412,5 +413,6 @@ async def resolve_mcq(request: Request):
 @app.get("/")
 def home():
     return {"message": "🧠 Review flow now includes seq_num & total_count + Resolve MCQ Intent Added ✅"}
+
 
 
