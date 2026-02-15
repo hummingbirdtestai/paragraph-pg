@@ -46,7 +46,7 @@ def create_stream_token(payload: TokenRequest):
         token = video_client.create_token(payload.user_id)
 
         # 2️⃣ Optionally ensure call exists (safe for concurrency)
-        call = video_client.call("audio_room", payload.battle_id)
+        call = video_client.call("default", payload.battle_id)
         call.get_or_create(
             data={
                 "created_by_id": payload.user_id,
