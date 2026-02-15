@@ -8,6 +8,7 @@ from newchat import router as newchat_router
 from payments import router as payments_router
 import json
 from notify import router as notify_router
+from stream_token import router as stream_router
 
 # MAIN.PY
 import logging
@@ -49,6 +50,7 @@ app.add_middleware(
 app.include_router(notify_router)
 app.include_router(newchat_router, prefix="/ask-paragraph")
 app.include_router(payments_router)
+app.include_router(stream_router)
 
 # ───────────────────────────────────────────────
 # MASTER ORCHESTRATOR ENDPOINT
@@ -410,4 +412,5 @@ async def resolve_mcq(request: Request):
 @app.get("/")
 def home():
     return {"message": "🧠 Review flow now includes seq_num & total_count + Resolve MCQ Intent Added ✅"}
+
 
