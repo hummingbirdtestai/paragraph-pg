@@ -25,3 +25,6 @@ pytz
 
 # --- Visualization (optional) ---
 matplotlib
+
+# ---- Stream Video (Audio Rooms) ----
+stream-video
