@@ -29,7 +29,7 @@ video_client = StreamVideo(
 # ───────────────────────────────────────────────
 class TokenRequest(BaseModel):
     user_id: str
-    role: str = "listener"   # default role
+    role: str = "student"
     battle_id: str
 
 
@@ -39,25 +39,20 @@ class TokenRequest(BaseModel):
 @router.post("/stream/token")
 def create_stream_token(payload: TokenRequest):
 
-    # Basic validation
     if not payload.user_id.strip():
         raise HTTPException(status_code=400, detail="user_id is required")
 
-    if payload.role not in ["teacher", "speaker", "listener"]:
-        raise HTTPException(status_code=400, detail="Invalid role")
-
     try:
-        # 1️⃣ Create Stream user token
+        # 🔥 THIS WAS MISSING
         video_client.upsert_users([
             {
                 "id": payload.user_id,
-                "role": payload.role,
+                "role": payload.role,   # must match teacher / student
             }
         ])
-        
+
         token = video_client.create_token(payload.user_id)
 
-        # 2️⃣ Optionally ensure call exists (safe for concurrency)
         call = video_client.call("audio_room", payload.battle_id)
         call.get_or_create(
             data={
