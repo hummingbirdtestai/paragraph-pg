@@ -27,6 +27,7 @@ pytz
 matplotlib
 
 # ---- Stream Video (Audio Rooms) ----
-stream-video==1.3.0
+stream-video==0.0.6
+
 
 
