@@ -3,7 +3,8 @@
 import os
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from stream_video import StreamVideoClient
+from stream_video import StreamVideo
+
 
 
 router = APIRouter()
@@ -17,7 +18,7 @@ api_secret = os.getenv("STREAM_API_SECRET")
 if not api_key or not api_secret:
     raise RuntimeError("STREAM_API_KEY or STREAM_API_SECRET not configured")
 
-video_client = StreamVideoClient(
+video_client = StreamVideo(
     api_key=api_key,
     api_secret=api_secret,
 )
