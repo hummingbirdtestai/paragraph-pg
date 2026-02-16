@@ -2,8 +2,10 @@
 
 import os
 import traceback
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from getstream import Stream
 from getstream.models import UserRequest
 
@@ -12,14 +14,15 @@ router = APIRouter()
 # ───────────────────────────────────────────────
 # 🔐 Environment Config
 # ───────────────────────────────────────────────
+
 api_key = os.getenv("STREAM_API_KEY")
 api_secret = os.getenv("STREAM_API_SECRET")
 
 if not api_key or not api_secret:
-    raise RuntimeError("STREAM_API_KEY or STREAM_API_SECRET not configured")
+    raise RuntimeError("❌ STREAM_API_KEY or STREAM_API_SECRET not configured")
 
 print("✅ Stream ENV Loaded")
-print("API KEY:", api_key)
+print("🔑 STREAM_API_KEY:", api_key)
 
 client = Stream(
     api_key=api_key,
@@ -32,58 +35,93 @@ print("✅ Stream client initialized")
 # ───────────────────────────────────────────────
 # 📦 Request Model
 # ───────────────────────────────────────────────
+
 class TokenRequest(BaseModel):
-    user_id: str
+    user_id: str = Field(..., min_length=1)
     role: str = "student"
-    battle_id: str
+    battle_id: str = Field(..., min_length=1)
 
 
 # ───────────────────────────────────────────────
 # 🎟 Generate Stream Token
 # ───────────────────────────────────────────────
+
 @router.post("/stream/token")
 def create_stream_token(payload: TokenRequest):
 
-    print("🔥 /stream/token endpoint hit")
-    print("Incoming payload:", payload.dict())
-
-    if not payload.user_id.strip():
-        raise HTTPException(status_code=400, detail="user_id is required")
+    print("\n🔥 ===== /stream/token HIT =====")
+    print("🕒 Time:", datetime.now().isoformat())
+    print("📥 Payload:", payload.dict())
 
     try:
+        # ───────────────────────────────
+        # Validate
+        # ───────────────────────────────
+        user_id = payload.user_id.strip()
         role = payload.role or "student"
-        print("Using role:", role)
+        battle_id = payload.battle_id.strip()
 
-        # ────────────────
+        if not user_id:
+            raise HTTPException(status_code=400, detail="user_id is required")
+
+        if not battle_id:
+            raise HTTPException(status_code=400, detail="battle_id is required")
+
+        print("👤 User ID:", user_id)
+        print("🎭 Role:", role)
+        print("⚔️ Battle ID:", battle_id)
+
+        # ───────────────────────────────
         # Upsert User
-        # ────────────────
-        print("➡️ Upserting user...")
+        # ───────────────────────────────
+        print("➡️ Upserting user in Stream...")
+
         client.upsert_users(
             UserRequest(
-                id=payload.user_id,
+                id=user_id,
                 role=role,
-                name=payload.user_id,
+                name=user_id,
             )
         )
-        print("✅ User upserted")
 
-        # ────────────────
-        # Create Token
-        # ────────────────
+        print("✅ User upserted successfully")
+
+        # ───────────────────────────────
+        # Create Token (1 hour expiry)
+        # ───────────────────────────────
         print("➡️ Generating token...")
-        token = client.create_token(payload.user_id, expiration=3600)
-        print("✅ Token generated")
 
-        return {
+        expiration = int(
+            (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()
+        )
+
+        token = client.create_token(
+            user_id=user_id,
+            expiration=expiration
+        )
+
+        print("✅ Token generated")
+        print("⏳ Token expiry:", expiration)
+
+        # ───────────────────────────────
+        # Return Response
+        # ───────────────────────────────
+        response = {
             "token": token,
             "api_key": api_key,
             "user": {
-                "id": payload.user_id,
+                "id": user_id,
                 "role": role,
             }
         }
 
+        print("📤 Sending response")
+        print("🔥 ===== SUCCESS =====\n")
+
+        return response
+
     except Exception as e:
-        print("❌ STREAM TOKEN ERROR")
+        print("\n❌ STREAM TOKEN ERROR")
         traceback.print_exc()
+        print("🔥 ===== FAILURE =====\n")
         raise HTTPException(status_code=500, detail=str(e))
