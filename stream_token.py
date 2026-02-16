@@ -6,7 +6,8 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from getstream.video import StreamVideo
+from getstream import Stream
+from getstream.models import UserRequest, MemberRequest
 
 router = APIRouter()
 
@@ -14,21 +15,19 @@ router = APIRouter()
 # 🔐 Environment Config
 # ───────────────────────────────────────────────
 
-STREAM_API_KEY = os.getenv("STREAM_API_KEY")
-STREAM_API_SECRET = os.getenv("STREAM_API_SECRET")
+api_key = os.getenv("STREAM_API_KEY")
+api_secret = os.getenv("STREAM_API_SECRET")
 
-if not STREAM_API_KEY or not STREAM_API_SECRET:
+if not api_key or not api_secret:
     raise RuntimeError("❌ STREAM_API_KEY or STREAM_API_SECRET not configured")
 
-print("✅ Stream Video ENV Loaded")
-print("🔑 STREAM_API_KEY:", STREAM_API_KEY)
-
-video_client = StreamVideo(
-    api_key=STREAM_API_KEY,
-    api_secret=STREAM_API_SECRET,
+client = Stream(
+    api_key=api_key,
+    api_secret=api_secret,
+    timeout=3.0,
 )
 
-print("✅ Stream Video client initialized")
+print("✅ Stream client initialized")
 
 
 # ───────────────────────────────────────────────
@@ -37,76 +36,102 @@ print("✅ Stream Video client initialized")
 
 class TokenRequest(BaseModel):
     user_id: str = Field(..., min_length=1)
-    role: str = "student"  # used only for frontend UI logic
+    role: str = "listener"   # teacher | speaker | listener
     battle_id: str = Field(..., min_length=1)
 
 
 # ───────────────────────────────────────────────
-# 🎟 Generate Stream Video Token
+# 🎟 Generate Stream Token + Ensure Call Exists
 # ───────────────────────────────────────────────
 
 @router.post("/stream/token")
 def create_stream_token(payload: TokenRequest):
 
-    print("\n🔥 ===== /stream/token HIT =====")
-    print("🕒 Time:", datetime.now().isoformat())
-    print("📥 Payload:", payload.dict())
-
     try:
-        # ───────────────────────────────
-        # Validate
-        # ───────────────────────────────
         user_id = payload.user_id.strip()
-        frontend_role = payload.role or "student"
+        frontend_role = payload.role or "listener"
         battle_id = payload.battle_id.strip()
 
         if not user_id:
-            raise HTTPException(status_code=400, detail="user_id is required")
+            raise HTTPException(status_code=400, detail="user_id required")
 
         if not battle_id:
-            raise HTTPException(status_code=400, detail="battle_id is required")
+            raise HTTPException(status_code=400, detail="battle_id required")
 
-        print("👤 User ID:", user_id)
-        print("🎭 Frontend Role:", frontend_role)
-        print("⚔️ Battle ID:", battle_id)
+        print(f"\n🔥 /stream/token | {user_id} | {frontend_role} | {battle_id}")
 
         # ───────────────────────────────
-        # Generate Video Token (NO upsert needed)
+        # 1️⃣ Upsert User (Required)
         # ───────────────────────────────
-        print("➡️ Generating Stream Video token...")
+
+        client.upsert_users(
+            UserRequest(
+                id=user_id,
+                role="user",  # Stream internal role
+                name=user_id,
+                custom={
+                    "frontend_role": frontend_role,
+                    "battle_id": battle_id,
+                },
+            )
+        )
+
+        # ───────────────────────────────
+        # 2️⃣ Ensure Audio Room Exists
+        # ───────────────────────────────
+
+        call = client.video.call("audio_room", battle_id)
+
+        try:
+            call.create(
+                data={
+                    "created_by_id": user_id,
+                }
+            )
+            print("🎧 Audio room created")
+        except Exception:
+            # Call already exists (safe to ignore)
+            pass
+
+        # ───────────────────────────────
+        # 3️⃣ Add Member To Call
+        # ───────────────────────────────
+
+        call.update(
+            members=[
+                MemberRequest(
+                    user_id=user_id,
+                    role="call_member",
+                )
+            ]
+        )
+
+        # ───────────────────────────────
+        # 4️⃣ Generate Token
+        # ───────────────────────────────
 
         expiration = int(
-            (datetime.now(timezone.utc) + timedelta(hours=2)).timestamp()
+            (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()
         )
 
-        token = video_client.create_token(
+        token = client.create_token(
             user_id=user_id,
-            exp=expiration,
+            expiration=expiration
         )
 
-        print("✅ Token generated")
-        print("⏳ Token expiry:", expiration)
+        # ───────────────────────────────
+        # 5️⃣ Response
+        # ───────────────────────────────
 
-        # ───────────────────────────────
-        # Return Response
-        # ───────────────────────────────
-        response = {
+        return {
             "token": token,
-            "api_key": STREAM_API_KEY,
-            "expires_at": expiration,
+            "api_key": api_key,
             "user": {
                 "id": user_id,
                 "role": frontend_role,
             }
         }
 
-        print("📤 Sending response")
-        print("🔥 ===== SUCCESS =====\n")
-
-        return response
-
     except Exception as e:
-        print("\n❌ STREAM TOKEN ERROR")
         traceback.print_exc()
-        print("🔥 ===== FAILURE =====\n")
         raise HTTPException(status_code=500, detail=str(e))
