@@ -22,8 +22,12 @@ if not api_key or not api_secret:
 client = Stream(
     api_key=api_key,
     api_secret=api_secret,
-    timeout=5.0,
+    timeout=5.0,  # slightly safer timeout
 )
+
+# ───────────────────────────────────────────────
+# Request Model
+# ───────────────────────────────────────────────
 
 class TokenRequest(BaseModel):
     user_id: str = Field(..., min_length=1)
@@ -31,6 +35,10 @@ class TokenRequest(BaseModel):
     battle_id: str = Field(..., min_length=1)
 
 ALLOWED_ROLES = {"teacher", "speaker", "listener"}
+
+# ───────────────────────────────────────────────
+# Token Endpoint
+# ───────────────────────────────────────────────
 
 @router.post("/stream/token")
 def create_stream_token(payload: TokenRequest):
@@ -48,11 +56,11 @@ def create_stream_token(payload: TokenRequest):
         if frontend_role not in ALLOWED_ROLES:
             frontend_role = "listener"
 
-        # 1️⃣ Ensure user exists
+        # 1️⃣ Ensure user exists in Stream
         client.upsert_users(
             UserRequest(
                 id=user_id,
-                role="user",
+                role="user",  # application-level role
                 name=user_id,
                 custom={
                     "frontend_role": frontend_role,
@@ -61,7 +69,7 @@ def create_stream_token(payload: TokenRequest):
             )
         )
 
-        # 2️⃣ Ensure call exists (ALL users call this — idempotent)
+        # 2️⃣ Ensure call exists (idempotent — safe for all users)
         call = client.video.call("audio_room", battle_id)
         call.get_or_create(
             data=CallRequest(
@@ -69,15 +77,15 @@ def create_stream_token(payload: TokenRequest):
             )
         )
 
-        # 3️⃣ Map frontend role → call role
+        # 3️⃣ Map frontend role → valid Stream call role
         if frontend_role == "teacher":
             call_role = "admin"
         elif frontend_role == "speaker":
             call_role = "moderator"
         else:
-            call_role = "call-member"
+            call_role = "user"   # ✅ FIXED (was "call-member")
 
-        # 4️⃣ Assign call-level role
+        # 4️⃣ Assign call-level role (idempotent)
         call.update_call_members(
             update_members=[
                 MemberRequest(
@@ -87,19 +95,24 @@ def create_stream_token(payload: TokenRequest):
             ]
         )
 
-        # 5️⃣ Generate token
-        exp = 60 * 60  # 1 hour
-        token = client.create_token(user_id=user_id, expiration=exp)
+        # 5️⃣ Generate token (1 hour validity)
+        token = client.create_token(
+            user_id=user_id,
+            expiration=60 * 60
+        )
 
         return {
             "token": token,
-            "api_key": api_key,
+            "api_key": api_key,  # safe to expose (NOT the secret)
             "user": {
                 "id": user_id,
                 "role": frontend_role,
             }
         }
 
-    except Exception:
+    except Exception as e:
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail="Stream token generation failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Stream token generation failed"
+        )
