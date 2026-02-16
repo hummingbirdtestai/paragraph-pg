@@ -2,54 +2,41 @@
 
 import os
 import traceback
-from datetime import datetime, timedelta, timezone
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from getstream import Stream
-from getstream.models import UserRequest, MemberRequest
+from getstream.models import UserRequest, MemberRequest, CallRequest
 
 router = APIRouter()
 
 # ───────────────────────────────────────────────
-# 🔐 Environment Config
+# Environment Configuration
 # ───────────────────────────────────────────────
 
 api_key = os.getenv("STREAM_API_KEY")
 api_secret = os.getenv("STREAM_API_SECRET")
 
 if not api_key or not api_secret:
-    raise RuntimeError("❌ STREAM_API_KEY or STREAM_API_SECRET not configured")
+    raise RuntimeError("STREAM_API_KEY or STREAM_API_SECRET not configured")
 
 client = Stream(
     api_key=api_key,
     api_secret=api_secret,
-    timeout=3.0,
+    timeout=5.0,
 )
-
-print("✅ Stream client initialized")
-
-
-# ───────────────────────────────────────────────
-# 📦 Request Model
-# ───────────────────────────────────────────────
 
 class TokenRequest(BaseModel):
     user_id: str = Field(..., min_length=1)
-    role: str = "listener"   # teacher | speaker | listener
+    role: str = "listener"
     battle_id: str = Field(..., min_length=1)
 
-
-# ───────────────────────────────────────────────
-# 🎟 Generate Stream Token + Ensure Call Exists
-# ───────────────────────────────────────────────
+ALLOWED_ROLES = {"teacher", "speaker", "listener"}
 
 @router.post("/stream/token")
 def create_stream_token(payload: TokenRequest):
-
     try:
         user_id = payload.user_id.strip()
-        frontend_role = payload.role or "listener"
+        frontend_role = payload.role.strip().lower()
         battle_id = payload.battle_id.strip()
 
         if not user_id:
@@ -58,16 +45,14 @@ def create_stream_token(payload: TokenRequest):
         if not battle_id:
             raise HTTPException(status_code=400, detail="battle_id required")
 
-        print(f"\n🔥 /stream/token | {user_id} | {frontend_role} | {battle_id}")
+        if frontend_role not in ALLOWED_ROLES:
+            frontend_role = "listener"
 
-        # ───────────────────────────────
-        # 1️⃣ Upsert User (Required)
-        # ───────────────────────────────
-
+        # 1️⃣ Ensure user exists
         client.upsert_users(
             UserRequest(
                 id=user_id,
-                role="user",  # Stream internal role
+                role="user",
                 name=user_id,
                 custom={
                     "frontend_role": frontend_role,
@@ -76,52 +61,35 @@ def create_stream_token(payload: TokenRequest):
             )
         )
 
-        # ───────────────────────────────
-        # 2️⃣ Ensure Audio Room Exists
-        # ───────────────────────────────
-
+        # 2️⃣ Ensure call exists (ALL users call this — idempotent)
         call = client.video.call("audio_room", battle_id)
-
-        try:
-            call.create(
-                data={
-                    "created_by_id": user_id,
-                }
+        call.get_or_create(
+            data=CallRequest(
+                created_by_id=user_id,
             )
-            print("🎧 Audio room created")
-        except Exception:
-            # Call already exists (safe to ignore)
-            pass
+        )
 
-        # ───────────────────────────────
-        # 3️⃣ Add Member To Call
-        # ───────────────────────────────
+        # 3️⃣ Map frontend role → call role
+        if frontend_role == "teacher":
+            call_role = "admin"
+        elif frontend_role == "speaker":
+            call_role = "moderator"
+        else:
+            call_role = "call-member"
 
-        call.update(
-            members=[
+        # 4️⃣ Assign call-level role
+        call.update_call_members(
+            update_members=[
                 MemberRequest(
                     user_id=user_id,
-                    role="call_member",
+                    role=call_role,
                 )
             ]
         )
 
-        # ───────────────────────────────
-        # 4️⃣ Generate Token
-        # ───────────────────────────────
-
-        expiration = int(
-            (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()
-        )
-
-        token = client.create_token(
-            user_id=user_id,
-            expiration=expiration
-        )
-
-        # ───────────────────────────────
-        # 5️⃣ Response
-        # ───────────────────────────────
+        # 5️⃣ Generate token
+        exp = 60 * 60  # 1 hour
+        token = client.create_token(user_id=user_id, expiration=exp)
 
         return {
             "token": token,
@@ -132,6 +100,6 @@ def create_stream_token(payload: TokenRequest):
             }
         }
 
-    except Exception as e:
+    except Exception:
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Stream token generation failed")
