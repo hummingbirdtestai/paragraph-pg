@@ -4,7 +4,8 @@ import os
 import traceback
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from stream_video import StreamVideo
+from getstream import Stream
+from getstream.models import UserRequest
 
 router = APIRouter()
 
@@ -20,12 +21,12 @@ if not api_key or not api_secret:
 print("✅ Stream ENV Loaded")
 print("API KEY:", api_key)
 
-video_client = StreamVideo(
+client = Stream(
     api_key=api_key,
     api_secret=api_secret,
 )
 
-print("✅ StreamVideo client initialized")
+print("✅ Stream client initialized")
 
 
 # ───────────────────────────────────────────────
@@ -47,37 +48,31 @@ def create_stream_token(payload: TokenRequest):
     print("Incoming payload:", payload.dict())
 
     if not payload.user_id.strip():
-        print("❌ user_id missing")
         raise HTTPException(status_code=400, detail="user_id is required")
 
     try:
         role = payload.role or "student"
         print("Using role:", role)
 
-        # ❌ REMOVE upsert_users — NOT SUPPORTED IN stream_video
+        # ────────────────
+        # Upsert User
+        # ────────────────
+        print("➡️ Upserting user...")
+        client.upsert_users(
+            UserRequest(
+                id=payload.user_id,
+                role=role,
+                name=payload.user_id,
+            )
+        )
+        print("✅ User upserted")
 
         # ────────────────
         # Create Token
         # ────────────────
         print("➡️ Generating token...")
-        token = video_client.create_token(payload.user_id)
+        token = client.create_token(payload.user_id, expiration=3600)
         print("✅ Token generated")
-
-        # ────────────────
-        # Create / Get Call
-        # ────────────────
-        print("➡️ Creating / getting call...")
-        call = video_client.call("audio_room", payload.battle_id)
-
-        call.get_or_create(
-            data={
-                "created_by_id": payload.user_id,
-                "custom": {
-                    "battle_id": payload.battle_id,
-                },
-            }
-        )
-        print("✅ Call ready")
 
         return {
             "token": token,
