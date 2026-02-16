@@ -22,11 +22,55 @@ if not api_key or not api_secret:
 client = Stream(
     api_key=api_key,
     api_secret=api_secret,
-    timeout=5.0,  # slightly safer timeout
+    timeout=5.0,
 )
 
 # ───────────────────────────────────────────────
-# Request Model
+# 🔥 ONE-TIME CALL TYPE CONFIGURATION
+# ───────────────────────────────────────────────
+
+def configure_audio_room():
+    try:
+        client.video.update_call_type(
+            name="audio_room",
+            grants={
+                "admin": [
+                    "create-call",
+                    "join-call",
+                    "send-audio",
+                    "mute-users",
+                    "update-call-member",
+                    "remove-call-member",
+                ],
+                "moderator": [
+                    "join-call",
+                    "send-audio",
+                ],
+                "call-member": [
+                    "join-call",
+                ],
+                "user": [],
+            },
+            settings={
+                "backstage": {"enabled": True},
+                "audio": {
+                    "mic_default_on": False,
+                    "speaker_default_on": True,
+                    "access_request_enabled": True,
+                },
+                "session": {
+                    "inactivity_timeout_seconds": 300,
+                },
+            },
+        )
+        print("✅ audio_room configured")
+    except Exception:
+        print("⚠ audio_room configuration skipped (may already exist)")
+
+configure_audio_room()
+
+# ───────────────────────────────────────────────
+# Request Models
 # ───────────────────────────────────────────────
 
 class TokenRequest(BaseModel):
@@ -34,10 +78,20 @@ class TokenRequest(BaseModel):
     role: str = "listener"
     battle_id: str = Field(..., min_length=1)
 
+class PromoteRequest(BaseModel):
+    battle_id: str
+    student_id: str
+    teacher_id: str
+
+class RemoveRequest(BaseModel):
+    battle_id: str
+    student_id: str
+    teacher_id: str
+
 ALLOWED_ROLES = {"teacher", "speaker", "listener"}
 
 # ───────────────────────────────────────────────
-# Token Endpoint
+# 🎫 TOKEN ENDPOINT
 # ───────────────────────────────────────────────
 
 @router.post("/stream/token")
@@ -47,20 +101,14 @@ def create_stream_token(payload: TokenRequest):
         frontend_role = payload.role.strip().lower()
         battle_id = payload.battle_id.strip()
 
-        if not user_id:
-            raise HTTPException(status_code=400, detail="user_id required")
-
-        if not battle_id:
-            raise HTTPException(status_code=400, detail="battle_id required")
-
         if frontend_role not in ALLOWED_ROLES:
             frontend_role = "listener"
 
-        # 1️⃣ Ensure user exists in Stream
+        # 1️⃣ Upsert user
         client.upsert_users(
             UserRequest(
                 id=user_id,
-                role="user",  # application-level role
+                role="user",
                 name=user_id,
                 custom={
                     "frontend_role": frontend_role,
@@ -69,23 +117,21 @@ def create_stream_token(payload: TokenRequest):
             )
         )
 
-        # 2️⃣ Ensure call exists (idempotent — safe for all users)
+        # 2️⃣ Ensure call exists
         call = client.video.call("audio_room", battle_id)
         call.get_or_create(
-            data=CallRequest(
-                created_by_id=user_id,
-            )
+            data=CallRequest(created_by_id=user_id)
         )
 
-        # 3️⃣ Map frontend role → valid Stream call role
+        # 3️⃣ Map frontend → Stream call role
         if frontend_role == "teacher":
             call_role = "admin"
         elif frontend_role == "speaker":
             call_role = "moderator"
         else:
-            call_role = "user"   # ✅ FIXED (was "call-member")
+            call_role = "call-member"
 
-        # 4️⃣ Assign call-level role (idempotent)
+        # 4️⃣ Assign call-level role
         call.update_call_members(
             update_members=[
                 MemberRequest(
@@ -95,7 +141,7 @@ def create_stream_token(payload: TokenRequest):
             ]
         )
 
-        # 5️⃣ Generate token (1 hour validity)
+        # 5️⃣ Generate token
         token = client.create_token(
             user_id=user_id,
             expiration=60 * 60
@@ -103,16 +149,104 @@ def create_stream_token(payload: TokenRequest):
 
         return {
             "token": token,
-            "api_key": api_key,  # safe to expose (NOT the secret)
+            "api_key": api_key,
             "user": {
                 "id": user_id,
                 "role": frontend_role,
             }
         }
 
-    except Exception as e:
+    except Exception:
         traceback.print_exc()
         raise HTTPException(
             status_code=500,
             detail="Stream token generation failed"
+        )
+
+
+# ───────────────────────────────────────────────
+# 🔐 INTERNAL HELPER: VERIFY ADMIN
+# ───────────────────────────────────────────────
+
+def verify_admin(call, teacher_id: str):
+    members_response = call.query_members()
+    teacher_member = next(
+        (m for m in members_response.members if m.user_id == teacher_id),
+        None
+    )
+
+    if not teacher_member or teacher_member.role != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Only admin can perform this action"
+        )
+
+
+# ───────────────────────────────────────────────
+# 🎙 PROMOTE LISTENER → SPEAKER
+# ───────────────────────────────────────────────
+
+@router.post("/stream/promote-to-speaker")
+def promote_to_speaker(payload: PromoteRequest):
+    try:
+        call = client.video.call("audio_room", payload.battle_id)
+
+        # 🔐 Verify teacher is admin
+        verify_admin(call, payload.teacher_id)
+
+        # 🚦 Ensure call is LIVE
+        call_info = call.get()
+        if call_info.call.backstage:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot promote while call is in backstage mode"
+            )
+
+        # 🎙 Promote
+        call.update_call_members(
+            update_members=[
+                MemberRequest(
+                    user_id=payload.student_id,
+                    role="moderator",
+                )
+            ]
+        )
+
+        return {"success": True}
+
+    except HTTPException:
+        raise
+    except Exception:
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to promote user"
+        )
+
+
+# ───────────────────────────────────────────────
+# ❌ REMOVE MEMBER
+# ───────────────────────────────────────────────
+
+@router.post("/stream/remove-member")
+def remove_member(payload: RemoveRequest):
+    try:
+        call = client.video.call("audio_room", payload.battle_id)
+
+        # 🔐 Verify teacher is admin
+        verify_admin(call, payload.teacher_id)
+
+        call.update_call_members(
+            remove_members=[payload.student_id]
+        )
+
+        return {"success": True}
+
+    except HTTPException:
+        raise
+    except Exception:
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to remove member"
         )
