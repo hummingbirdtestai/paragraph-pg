@@ -46,10 +46,10 @@ def configure_audio_room():
                     "join-call",
                     "send-audio",
                 ],
-                "call-member": [
+                # ✅ LISTENERS
+                "user": [
                     "join-call",
                 ],
-                "user": [],
             },
             settings={
                 "backstage": {"enabled": True},
@@ -129,7 +129,7 @@ def create_stream_token(payload: TokenRequest):
         elif frontend_role == "speaker":
             call_role = "moderator"
         else:
-            call_role = "call-member"
+            call_role = "user"  # ✅ FIXED
 
         # 4️⃣ Assign call-level role
         call.update_call_members(
@@ -163,13 +163,13 @@ def create_stream_token(payload: TokenRequest):
             detail="Stream token generation failed"
         )
 
-
 # ───────────────────────────────────────────────
 # 🔐 INTERNAL HELPER: VERIFY ADMIN
 # ───────────────────────────────────────────────
 
 def verify_admin(call, teacher_id: str):
     members_response = call.query_members()
+
     teacher_member = next(
         (m for m in members_response.members if m.user_id == teacher_id),
         None
@@ -180,7 +180,6 @@ def verify_admin(call, teacher_id: str):
             status_code=403,
             detail="Only admin can perform this action"
         )
-
 
 # ───────────────────────────────────────────────
 # 🎙 PROMOTE LISTENER → SPEAKER
@@ -202,7 +201,7 @@ def promote_to_speaker(payload: PromoteRequest):
                 detail="Cannot promote while call is in backstage mode"
             )
 
-        # 🎙 Promote
+        # 🎙 Promote to moderator
         call.update_call_members(
             update_members=[
                 MemberRequest(
@@ -222,7 +221,6 @@ def promote_to_speaker(payload: PromoteRequest):
             status_code=500,
             detail="Failed to promote user"
         )
-
 
 # ───────────────────────────────────────────────
 # ❌ REMOVE MEMBER
