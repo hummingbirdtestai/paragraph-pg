@@ -27,6 +27,7 @@ video_client = StreamVideo(
 
 print("✅ StreamVideo client initialized")
 
+
 # ───────────────────────────────────────────────
 # 📦 Request Model
 # ───────────────────────────────────────────────
@@ -53,17 +54,7 @@ def create_stream_token(payload: TokenRequest):
         role = payload.role or "student"
         print("Using role:", role)
 
-        # ────────────────
-        # Upsert User
-        # ────────────────
-        print("➡️ Upserting user...")
-        video_client.upsert_users([
-            {
-                "id": payload.user_id,
-                "role": role,
-            }
-        ])
-        print("✅ User upserted")
+        # ❌ REMOVE upsert_users — NOT SUPPORTED IN stream_video
 
         # ────────────────
         # Create Token
