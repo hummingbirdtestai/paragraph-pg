@@ -38,7 +38,7 @@ print("✅ Stream client initialized")
 
 class TokenRequest(BaseModel):
     user_id: str = Field(..., min_length=1)
-    role: str = "student"
+    role: str = "student"   # used only for frontend logic
     battle_id: str = Field(..., min_length=1)
 
 
@@ -58,7 +58,7 @@ def create_stream_token(payload: TokenRequest):
         # Validate
         # ───────────────────────────────
         user_id = payload.user_id.strip()
-        role = payload.role or "student"
+        frontend_role = payload.role or "student"
         battle_id = payload.battle_id.strip()
 
         if not user_id:
@@ -68,18 +68,18 @@ def create_stream_token(payload: TokenRequest):
             raise HTTPException(status_code=400, detail="battle_id is required")
 
         print("👤 User ID:", user_id)
-        print("🎭 Role:", role)
+        print("🎭 Frontend Role:", frontend_role)
         print("⚔️ Battle ID:", battle_id)
 
         # ───────────────────────────────
-        # Upsert User
+        # IMPORTANT: Always use default Stream role "user"
         # ───────────────────────────────
-        print("➡️ Upserting user in Stream...")
+        print("➡️ Upserting user in Stream with role='user'...")
 
         client.upsert_users(
             UserRequest(
                 id=user_id,
-                role=role,
+                role="user",  # 🔥 DO NOT use teacher/student here
                 name=user_id,
             )
         )
@@ -111,7 +111,7 @@ def create_stream_token(payload: TokenRequest):
             "api_key": api_key,
             "user": {
                 "id": user_id,
-                "role": role,
+                "role": frontend_role,  # send back for UI usage
             }
         }
 
