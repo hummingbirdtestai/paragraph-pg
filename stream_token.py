@@ -46,7 +46,6 @@ def configure_audio_room():
                     "join-call",
                     "send-audio",
                 ],
-                # ✅ LISTENERS
                 "user": [
                     "join-call",
                 ],
@@ -117,11 +116,14 @@ def create_stream_token(payload: TokenRequest):
             )
         )
 
-        # 2️⃣ Ensure call exists
+        # 2️⃣ Get call reference
         call = client.video.call("audio_room", battle_id)
-        call.get_or_create(
-            data=CallRequest(created_by_id=user_id)
-        )
+
+        # ✅ ONLY TEACHER CREATES CALL
+        if frontend_role == "teacher":
+            call.get_or_create(
+                data=CallRequest(created_by_id=user_id)
+            )
 
         # 3️⃣ Map frontend → Stream call role
         if frontend_role == "teacher":
@@ -129,7 +131,7 @@ def create_stream_token(payload: TokenRequest):
         elif frontend_role == "speaker":
             call_role = "moderator"
         else:
-            call_role = "user"  # ✅ FIXED
+            call_role = "user"
 
         # 4️⃣ Assign call-level role
         call.update_call_members(
@@ -190,10 +192,8 @@ def promote_to_speaker(payload: PromoteRequest):
     try:
         call = client.video.call("audio_room", payload.battle_id)
 
-        # 🔐 Verify teacher is admin
         verify_admin(call, payload.teacher_id)
 
-        # 🚦 Ensure call is LIVE
         call_info = call.get()
         if call_info.call.backstage:
             raise HTTPException(
@@ -201,7 +201,6 @@ def promote_to_speaker(payload: PromoteRequest):
                 detail="Cannot promote while call is in backstage mode"
             )
 
-        # 🎙 Promote to moderator
         call.update_call_members(
             update_members=[
                 MemberRequest(
@@ -231,7 +230,6 @@ def remove_member(payload: RemoveRequest):
     try:
         call = client.video.call("audio_room", payload.battle_id)
 
-        # 🔐 Verify teacher is admin
         verify_admin(call, payload.teacher_id)
 
         call.update_call_members(
