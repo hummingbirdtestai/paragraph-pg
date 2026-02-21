@@ -2,15 +2,13 @@
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-@@ -7,15 +7,18 @@
+import requests
+import os
 from supabase import create_client
 from dotenv import load_dotenv
 from datetime import datetime
 
-
 load_dotenv()
-
-
 
 def log(tag: str, data=None):
     ts = datetime.utcnow().isoformat()
@@ -21,7 +19,12 @@ def log(tag: str, data=None):
 
 # ---------------- CONFIG ----------------
 
-@@ -28,22 +31,13 @@ def log(tag: str, data=None):
+log("BOOT_START")
+
+BUNNY_STORAGE_ZONE = os.getenv("BUNNY_STORAGE_ZONE")
+BUNNY_API_KEY = os.getenv("BUNNY_STORAGE_API_KEY")
+BUNNY_PULL_ZONE = os.getenv("BUNNY_PULL_ZONE")
+
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
@@ -44,7 +47,8 @@ if not all([
     raise RuntimeError("Missing required environment variables")
 
 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-@@ -52,7 +46,6 @@ def log(tag: str, data=None):
+
+BUNNY_STORAGE_BASE = f"https://sg.storage.bunnycdn.com/{BUNNY_STORAGE_ZONE}"
 
 log("BOOT_COMPLETE", {
     "BUNNY_STORAGE_BASE": BUNNY_STORAGE_BASE,
@@ -52,7 +56,8 @@ log("BOOT_COMPLETE", {
 })
 
 # ---------------- APP ----------------
-@@ -61,136 +54,125 @@ def log(tag: str, data=None):
+
+app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
@@ -131,8 +136,6 @@ def update_supabase(row_id: str, bunny_url: str):
 async def upload_mockimage_to_bunny(
     file: UploadFile = File(...),
     row_id: str = Form(...)
-
-
 ):
     """
     Receives:
@@ -148,25 +151,9 @@ async def upload_mockimage_to_bunny(
         "row_id": row_id,
         "filename": file.filename,
         "content_type": file.content_type,
-
     })
 
     try:
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
         contents = await file.read()
 
         log("FILE_READ", {
@@ -183,11 +170,6 @@ async def upload_mockimage_to_bunny(
         filename = f"{row_id}.{ext}"
         log("FINAL_FILENAME", filename)
 
-
-
-
-
-
         bunny_url = upload_to_bunny(
             contents,
             filename,
@@ -202,9 +184,6 @@ async def upload_mockimage_to_bunny(
 
         return {
             "status": "ok",
-
-
-
             "url": bunny_url
         }
 
