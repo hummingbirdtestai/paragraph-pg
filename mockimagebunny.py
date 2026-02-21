@@ -1,35 +1,37 @@
-# ---------------- BUCKET_IMAGE_BUNNY_API.PY ----------------
+# ---------------- MOCKIMAGEBUNNY.PY ----------------
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-import requests
-import os
+@@ -7,15 +7,18 @@
 from supabase import create_client
 from dotenv import load_dotenv
 from datetime import datetime
-import uuid
+
 
 load_dotenv()
 
-# ---------------- LOGGER ----------------
+
 
 def log(tag: str, data=None):
     ts = datetime.utcnow().isoformat()
     if data is not None:
-        print(f"[{ts}][BUCKET_BUNNY_API][{tag}]", data, flush=True)
+        print(f"[{ts}][MOCK_BUNNY_API][{tag}]", data, flush=True)
     else:
-        print(f"[{ts}][BUCKET_BUNNY_API][{tag}]", flush=True)
+        print(f"[{ts}][MOCK_BUNNY_API][{tag}]", flush=True)
 
 # ---------------- CONFIG ----------------
 
-log("BOOT_START")
-
-BUNNY_STORAGE_ZONE = os.getenv("BUNNY_STORAGE_ZONE")
-BUNNY_API_KEY = os.getenv("BUNNY_STORAGE_API_KEY")
-BUNNY_PULL_ZONE = os.getenv("BUNNY_PULL_ZONE")
-
+@@ -28,22 +31,13 @@ def log(tag: str, data=None):
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+
+log("ENV_LOADED", {
+    "BUNNY_STORAGE_ZONE": bool(BUNNY_STORAGE_ZONE),
+    "BUNNY_API_KEY": bool(BUNNY_API_KEY),
+    "BUNNY_PULL_ZONE": bool(BUNNY_PULL_ZONE),
+    "SUPABASE_URL": bool(SUPABASE_URL),
+    "SUPABASE_SERVICE_KEY": bool(SUPABASE_SERVICE_KEY),
+})
 
 if not all([
     BUNNY_STORAGE_ZONE,
@@ -38,141 +40,178 @@ if not all([
     SUPABASE_URL,
     SUPABASE_SERVICE_KEY
 ]):
+    log("ENV_MISSING_FATAL")
     raise RuntimeError("Missing required environment variables")
 
 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-
-BUNNY_STORAGE_BASE = f"https://sg.storage.bunnycdn.com/{BUNNY_STORAGE_ZONE}"
+@@ -52,7 +46,6 @@ def log(tag: str, data=None):
 
 log("BOOT_COMPLETE", {
     "BUNNY_STORAGE_BASE": BUNNY_STORAGE_BASE,
+    "BUNNY_PULL_ZONE": BUNNY_PULL_ZONE,
 })
 
 # ---------------- APP ----------------
-
-app = FastAPI()
+@@ -61,136 +54,125 @@ def log(tag: str, data=None):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # tighten later
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+log("FASTAPI_READY")
+
 # ---------------- HELPERS ----------------
 
 def upload_to_bunny(file_bytes: bytes, filename: str) -> str:
-
     upload_url = f"{BUNNY_STORAGE_BASE}/{filename}"
+
+    log("BUNNY_UPLOAD_START", {
+        "filename": filename,
+        "size_bytes": len(file_bytes),
+        "upload_url": upload_url,
+    })
 
     r = requests.put(
         upload_url,
-        headers={"AccessKey": BUNNY_API_KEY},
+        headers={
+            "AccessKey": BUNNY_API_KEY,
+        },
         data=file_bytes,
         timeout=30,
     )
 
-    if r.status_code not in (200, 201):
-        raise RuntimeError(f"Bunny upload failed: {r.status_code}")
-
-    return f"{BUNNY_PULL_ZONE}/{filename}"
-
-
-def update_bucket_json(schedule_id: int, image_id: str, bunny_url: str):
-
-    log("SUPABASE_RPC_CALL", {
-        "schedule_id": schedule_id,
-        "image_id": image_id
+    log("BUNNY_UPLOAD_RESPONSE", {
+        "status_code": r.status_code,
+        "reason": r.reason,
     })
 
-    res = supabase.rpc(
-        "update_bucket_image_url_v1",
-        {
-            "p_schedule_id": schedule_id,
-            "p_image_id": image_id,
-            "p_bunny_url": bunny_url
-        }
-    ).execute()
+    if r.status_code not in (200, 201):
+        log("BUNNY_UPLOAD_FAILED", r.text)
+        raise RuntimeError(f"Bunny upload failed: {r.status_code}")
 
-    log("SUPABASE_RPC_DONE", res.data)
+    bunny_url = f"{BUNNY_PULL_ZONE}/{filename}"
 
+    log("BUNNY_UPLOAD_SUCCESS", bunny_url)
+
+    return bunny_url
+
+
+def update_supabase(row_id: str, bunny_url: str):
+    log("SUPABASE_UPDATE_START", {
+        "row_id": row_id,
+        "bunny_url": bunny_url,
+    })
+
+    res = (
+        supabase
+        .table("mock_tests_phases")
+        .update({"mcq_image": bunny_url})
+        .eq("id", row_id)
+        .execute()
+    )
+
+    log("SUPABASE_UPDATE_RESPONSE", {
+        "data": res.data,
+        "count": len(res.data) if res.data else 0,
+    })
+
+    if not res.data:
+        log("SUPABASE_UPDATE_FAILED")
+        raise RuntimeError("Supabase update failed")
+
+    log("SUPABASE_UPDATE_SUCCESS", row_id)
 
 # ---------------- ENDPOINT ----------------
 
-@app.post("/upload-bucket-image-to-bunny")
-async def upload_bucket_image_to_bunny(
+@app.post("/upload-mockimage-to-bunny")
+async def upload_mockimage_to_bunny(
     file: UploadFile = File(...),
-    schedule_id: int = Form(...),
-    topic_id: str = Form(...),   # currently unused but future-proof
-    image_id: str = Form(...)
+    row_id: str = Form(...)
+
+
 ):
     """
-    Uploads image to Bunny.
-    Updates image_url inside live_class_schedule.buket_image_description JSONB.
+    Receives:
+    - image file
+    - row_id (uuid from mock_tests_phases)
+
+    Does:
+    - uploads image to Bunny as <row_id>.<ext>
+    - stores Bunny URL in mock_tests_phases.mcq_image
     """
 
     log("REQUEST_RECEIVED", {
-        "schedule_id": schedule_id,
-        "topic_id": topic_id,
-        "image_id": image_id,
-        "filename": file.filename
+        "row_id": row_id,
+        "filename": file.filename,
+        "content_type": file.content_type,
+
     })
 
     try:
 
-        # ---------------- VALIDATION ----------------
 
-        try:
-            uuid.UUID(image_id)
-        except:
-            raise HTTPException(status_code=400, detail="Invalid image_id UUID")
 
-        try:
-            uuid.UUID(topic_id)
-        except:
-            raise HTTPException(status_code=400, detail="Invalid topic_id UUID")
 
-        # ---------------- READ FILE ----------------
+
+
+
+
+
+
+
+
+
+
 
         contents = await file.read()
 
-        if not contents:
-            raise HTTPException(status_code=400, detail="Empty file")
+        log("FILE_READ", {
+            "bytes": len(contents),
+        })
 
         ext = file.filename.split(".")[-1].lower()
+        log("FILE_EXTENSION", ext)
 
         if ext not in ["jpg", "jpeg", "png", "webp"]:
+            log("UNSUPPORTED_FILE_TYPE", ext)
             raise HTTPException(status_code=400, detail="Unsupported image type")
 
-        # ---------------- UPLOAD TO BUNNY ----------------
+        filename = f"{row_id}.{ext}"
+        log("FINAL_FILENAME", filename)
 
-        filename = f"{image_id}.{ext}"
 
-        bunny_url = upload_to_bunny(contents, filename)
 
-        log("BUNNY_UPLOAD_SUCCESS", bunny_url)
 
-        # ---------------- UPDATE JSON VIA RPC ----------------
 
-        update_bucket_json(schedule_id, image_id, bunny_url)
+
+        bunny_url = upload_to_bunny(
+            contents,
+            filename,
+        )
+
+        update_supabase(row_id, bunny_url)
 
         log("REQUEST_SUCCESS", {
-            "image_id": image_id,
-            "bunny_url": bunny_url
+            "row_id": row_id,
+            "bunny_url": bunny_url,
         })
 
         return {
             "status": "ok",
-            "schedule_id": schedule_id,
-            "topic_id": topic_id,
-            "image_id": image_id,
+
+
+
             "url": bunny_url
         }
 
-    except HTTPException:
+    except HTTPException as e:
+        log("HTTP_EXCEPTION", str(e.detail))
         raise
 
     except Exception as e:
-        log("ERROR", str(e))
+        log("UNHANDLED_EXCEPTION", str(e))
         raise HTTPException(status_code=500, detail=str(e))
