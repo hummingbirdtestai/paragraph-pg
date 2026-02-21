@@ -15,10 +15,7 @@ load_dotenv()
 
 def log(tag: str, data=None):
     ts = datetime.utcnow().isoformat()
-    if data is not None:
-        print(f"[{ts}][BUCKET_BUNNY_API][{tag}]", data, flush=True)
-    else:
-        print(f"[{ts}][BUCKET_BUNNY_API][{tag}]", flush=True)
+    print(f"[{ts}][BUCKET_IMAGE_API][{tag}] {data}", flush=True)
 
 # ---------------- CONFIG ----------------
 
@@ -46,6 +43,7 @@ BUNNY_STORAGE_BASE = f"https://sg.storage.bunnycdn.com/{BUNNY_STORAGE_ZONE}"
 
 log("BOOT_COMPLETE", {
     "BUNNY_STORAGE_BASE": BUNNY_STORAGE_BASE,
+    "PULL_ZONE": BUNNY_PULL_ZONE
 })
 
 # ---------------- APP ----------------
@@ -63,8 +61,9 @@ app.add_middleware(
 # ---------------- HELPERS ----------------
 
 def upload_to_bunny(file_bytes: bytes, filename: str) -> str:
-
     upload_url = f"{BUNNY_STORAGE_BASE}/{filename}"
+
+    log("BUNNY_UPLOAD_START", upload_url)
 
     r = requests.put(
         upload_url,
@@ -73,15 +72,38 @@ def upload_to_bunny(file_bytes: bytes, filename: str) -> str:
         timeout=30,
     )
 
+    log("BUNNY_RESPONSE", {"status": r.status_code})
+
     if r.status_code not in (200, 201):
         raise RuntimeError(f"Bunny upload failed: {r.status_code}")
 
     return f"{BUNNY_PULL_ZONE}/{filename}"
 
 
+def verify_schedule_exists(schedule_id: int):
+    log("VERIFY_SCHEDULE", schedule_id)
+
+    res = (
+        supabase
+        .table("live_class_schedule")
+        .select("id, buket_image_description")
+        .eq("id", schedule_id)
+        .limit(1)
+        .execute()
+    )
+
+    if not res.data:
+        raise RuntimeError("Schedule ID not found")
+
+    if res.data[0]["buket_image_description"] is None:
+        raise RuntimeError("buket_image_description is NULL")
+
+    log("SCHEDULE_VERIFIED", schedule_id)
+
+
 def update_bucket_json(schedule_id: int, image_id: str, bunny_url: str):
 
-    log("SUPABASE_RPC_CALL", {
+    log("RPC_CALL_START", {
         "schedule_id": schedule_id,
         "image_id": image_id
     })
@@ -95,8 +117,7 @@ def update_bucket_json(schedule_id: int, image_id: str, bunny_url: str):
         }
     ).execute()
 
-    log("SUPABASE_RPC_DONE", res.data)
-
+    log("RPC_RESPONSE", res.data)
 
 # ---------------- ENDPOINT ----------------
 
@@ -104,13 +125,9 @@ def update_bucket_json(schedule_id: int, image_id: str, bunny_url: str):
 async def upload_bucket_image_to_bunny(
     file: UploadFile = File(...),
     schedule_id: int = Form(...),
-    topic_id: str = Form(...),   # currently unused but future-proof
+    topic_id: str = Form(...),
     image_id: str = Form(...)
 ):
-    """
-    Uploads image to Bunny.
-    Updates image_url inside live_class_schedule.buket_image_description JSONB.
-    """
 
     log("REQUEST_RECEIVED", {
         "schedule_id": schedule_id,
@@ -120,30 +137,26 @@ async def upload_bucket_image_to_bunny(
     })
 
     try:
-
         # ---------------- VALIDATION ----------------
 
-        try:
-            uuid.UUID(image_id)
-        except:
-            raise HTTPException(status_code=400, detail="Invalid image_id UUID")
+        uuid.UUID(image_id)
+        uuid.UUID(topic_id)
 
-        try:
-            uuid.UUID(topic_id)
-        except:
-            raise HTTPException(status_code=400, detail="Invalid topic_id UUID")
+        # ---------------- VERIFY TABLE ROW ----------------
+
+        verify_schedule_exists(schedule_id)
 
         # ---------------- READ FILE ----------------
 
         contents = await file.read()
 
         if not contents:
-            raise HTTPException(status_code=400, detail="Empty file")
+            raise RuntimeError("Empty file")
 
         ext = file.filename.split(".")[-1].lower()
 
         if ext not in ["jpg", "jpeg", "png", "webp"]:
-            raise HTTPException(status_code=400, detail="Unsupported image type")
+            raise RuntimeError("Unsupported file type")
 
         # ---------------- UPLOAD TO BUNNY ----------------
 
@@ -153,25 +166,23 @@ async def upload_bucket_image_to_bunny(
 
         log("BUNNY_UPLOAD_SUCCESS", bunny_url)
 
-        # ---------------- UPDATE JSON VIA RPC ----------------
+        # ---------------- UPDATE JSON ----------------
 
         update_bucket_json(schedule_id, image_id, bunny_url)
 
-        log("REQUEST_SUCCESS", {
+        log("SUCCESS_COMPLETE", {
             "image_id": image_id,
             "bunny_url": bunny_url
         })
 
         return {
             "status": "ok",
+            "table": "public.live_class_schedule",
+            "column": "buket_image_description",
             "schedule_id": schedule_id,
-            "topic_id": topic_id,
             "image_id": image_id,
             "url": bunny_url
         }
-
-    except HTTPException:
-        raise
 
     except Exception as e:
         log("ERROR", str(e))
