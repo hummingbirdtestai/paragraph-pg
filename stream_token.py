@@ -66,7 +66,42 @@ def configure_audio_room():
     except Exception:
         print("⚠ audio_room configuration skipped (may already exist)")
 
+def configure_livestream():
+    try:
+        client.video.update_call_type(
+            name="livestream",
+            grants={
+                "admin": [
+                    "create-call",
+                    "join-call",
+                    "send-audio",
+                    "send-video",
+                    "start-call",
+                    "end-call",
+                ],
+                "user": [
+                    "join-call",
+                ],
+            },
+            settings={
+                "backstage": {"enabled": True},
+                "video": {
+                    "camera_default_on": False,
+                },
+                "audio": {
+                    "mic_default_on": False,
+                },
+                "session": {
+                    "inactivity_timeout_seconds": 600,
+                },
+            },
+        )
+        print("✅ livestream configured")
+    except Exception:
+        print("⚠ livestream configuration skipped (may already exist)")
+
 configure_audio_room()
+configure_livestream()
 
 # ───────────────────────────────────────────────
 # Request Models
@@ -75,6 +110,11 @@ configure_audio_room()
 class TokenRequest(BaseModel):
     user_id: str = Field(..., min_length=1)
     role: str = "listener"
+    battle_id: str = Field(..., min_length=1)
+
+class VideoTokenRequest(BaseModel):
+    user_id: str = Field(..., min_length=1)
+    role: str = "viewer"
     battle_id: str = Field(..., min_length=1)
 
 class PromoteRequest(BaseModel):
@@ -88,9 +128,10 @@ class RemoveRequest(BaseModel):
     teacher_id: str
 
 ALLOWED_ROLES = {"teacher", "speaker", "listener"}
+VIDEO_ALLOWED_ROLES = {"teacher", "viewer"}
 
 # ───────────────────────────────────────────────
-# 🎫 TOKEN ENDPOINT
+# 🎫 AUDIO ROOM TOKEN ENDPOINT (UNCHANGED)
 # ───────────────────────────────────────────────
 
 @router.post("/stream/token")
@@ -103,7 +144,6 @@ def create_stream_token(payload: TokenRequest):
         if frontend_role not in ALLOWED_ROLES:
             frontend_role = "listener"
 
-        # 1️⃣ Upsert user
         client.upsert_users(
             UserRequest(
                 id=user_id,
@@ -116,16 +156,13 @@ def create_stream_token(payload: TokenRequest):
             )
         )
 
-        # 2️⃣ Get call reference
         call = client.video.call("audio_room", battle_id)
 
-        # ✅ ONLY TEACHER CREATES CALL
         if frontend_role == "teacher":
             call.get_or_create(
                 data=CallRequest(created_by_id=user_id)
             )
 
-        # 3️⃣ Map frontend → Stream call role
         if frontend_role == "teacher":
             call_role = "admin"
         elif frontend_role == "speaker":
@@ -133,7 +170,6 @@ def create_stream_token(payload: TokenRequest):
         else:
             call_role = "user"
 
-        # 4️⃣ Assign call-level role
         call.update_call_members(
             update_members=[
                 MemberRequest(
@@ -143,7 +179,6 @@ def create_stream_token(payload: TokenRequest):
             ]
         )
 
-        # 5️⃣ Generate token
         token = client.create_token(
             user_id=user_id,
             expiration=60 * 60
@@ -166,6 +201,74 @@ def create_stream_token(payload: TokenRequest):
         )
 
 # ───────────────────────────────────────────────
+# 🎥 LIVESTREAM VIDEO TOKEN ENDPOINT (NEW)
+# ───────────────────────────────────────────────
+
+@router.post("/stream/video-token")
+def create_video_stream_token(payload: VideoTokenRequest):
+    try:
+        user_id = payload.user_id.strip()
+        frontend_role = payload.role.strip().lower()
+        battle_id = payload.battle_id.strip()
+
+        if frontend_role not in VIDEO_ALLOWED_ROLES:
+            frontend_role = "viewer"
+
+        client.upsert_users(
+            UserRequest(
+                id=user_id,
+                role="user",
+                name=user_id,
+                custom={
+                    "video_role": frontend_role,
+                    "battle_id": battle_id,
+                },
+            )
+        )
+
+        call = client.video.call("livestream", battle_id)
+
+        if frontend_role == "teacher":
+            call.get_or_create(
+                data=CallRequest(created_by_id=user_id)
+            )
+
+        if frontend_role == "teacher":
+            call_role = "admin"
+        else:
+            call_role = "user"
+
+        call.update_call_members(
+            update_members=[
+                MemberRequest(
+                    user_id=user_id,
+                    role=call_role,
+                )
+            ]
+        )
+
+        token = client.create_token(
+            user_id=user_id,
+            expiration=60 * 60
+        )
+
+        return {
+            "token": token,
+            "api_key": api_key,
+            "user": {
+                "id": user_id,
+                "role": frontend_role,
+            }
+        }
+
+    except Exception:
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail="Video token generation failed"
+        )
+
+# ───────────────────────────────────────────────
 # 🔐 INTERNAL HELPER: VERIFY ADMIN
 # ───────────────────────────────────────────────
 
@@ -184,7 +287,7 @@ def verify_admin(call, teacher_id: str):
         )
 
 # ───────────────────────────────────────────────
-# 🎙 PROMOTE LISTENER → SPEAKER
+# 🎙 PROMOTE LISTENER → SPEAKER (UNCHANGED)
 # ───────────────────────────────────────────────
 
 @router.post("/stream/promote-to-speaker")
@@ -222,7 +325,7 @@ def promote_to_speaker(payload: PromoteRequest):
         )
 
 # ───────────────────────────────────────────────
-# ❌ REMOVE MEMBER
+# ❌ REMOVE MEMBER (UNCHANGED)
 # ───────────────────────────────────────────────
 
 @router.post("/stream/remove-member")
