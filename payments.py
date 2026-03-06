@@ -51,7 +51,7 @@ PRICING_MAP = {
 }
 
 PLAN_MONTHS = {
-    "1": 12,         # 👈 NEW
+    "1": None,         # 👈 NEW
     "3": 3,
     "6": 6,
     "12": 12,
@@ -334,7 +334,15 @@ async def cashfree_webhook(request: Request):
         }).eq("order_id", order_id).execute()
 
         starts_at = datetime.utcnow()
-        ends_at = starts_at + timedelta(days=30 * PLAN_MONTHS[plan])
+        # ───────────────────────────────────────────────
+        # PLAN EXPIRY LOGIC
+        # ───────────────────────────────────────────────
+        
+        if plan == "1":
+            # Special NEETPG 2026 batch validity
+             ends_at = datetime(2026, 8, 30, 23, 59, 59)
+        else:
+            ends_at = starts_at + timedelta(days=30 * PLAN_MONTHS[plan])
 
         supabase.table("users").update({
             "is_paid": True,
