@@ -137,9 +137,15 @@ async def wait_if_paused(battle_id):
 
     while True:
 
-        state = supabase.table("live_class_state").select("is_paused").eq("battle_id", battle_id).single().execute().data
+        resp = supabase.table("live_class_state") \
+            .select("is_paused") \
+            .eq("battle_id", battle_id) \
+            .limit(1) \
+            .execute()
 
-        if not state["is_paused"]:
+        state = resp.data[0] if resp.data else None
+
+        if state and not state["is_paused"]:
             break
 
         await asyncio.sleep(1)
