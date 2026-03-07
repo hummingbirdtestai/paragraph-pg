@@ -328,31 +328,49 @@ async def pause_session(battle_id: str):
 @app.post("/session/resume/{battle_id}")
 async def resume_session(battle_id: str):
 
+    # remove pause
     supabase.table("live_class_state").update({
         "is_paused": False
     }).eq("battle_id", battle_id).execute()
 
+    # fetch state
     state_resp = supabase.table("live_class_state") \
         .select("*") \
         .eq("battle_id", battle_id) \
         .limit(1) \
         .execute()
 
-    state = state_resp.data[0] if state_resp.data else {}
+    if not state_resp.data:
+        return {"status": "no_state"}
 
+    state = state_resp.data[0]
+
+    phase = state.get("phase")
+    payload = state.get("payload")
+    seq = state.get("seq")
+    time_left = state.get("time_left")
+
+    logger.info(f"RESUME BROADCAST phase={phase} seq={seq}")
+
+    # rebroadcast the phase event itself
+    if phase:
+        broadcast_event(
+            battle_id,
+            phase,
+            payload
+        )
+
+    # also send timer so FE continues countdown
     broadcast_event(
         battle_id,
-        "resumed",
+        "timer",
         {
-            "phase": state.get("phase"),
-            "seq": state.get("seq"),
-            "payload": state.get("payload"),
-            "time_left": state.get("time_left")
+            "phase": phase,
+            "time_left": time_left
         }
     )
 
     return {"status": "resumed"}
-
 # -----------------------------------------------------
 # Stop session
 # -----------------------------------------------------
