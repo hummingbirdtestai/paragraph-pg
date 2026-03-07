@@ -158,6 +158,19 @@ async def countdown(battle_id, phase, seconds, seq=None, payload=None):
 
     for t in range(seconds, 0, -1):
 
+        # STOP GUARD
+        resp = supabase.table("live_class_state") \
+            .select("is_running") \
+            .eq("battle_id", battle_id) \
+            .limit(1) \
+            .execute()
+
+        state = resp.data[0] if resp.data else None
+
+        if state and not state["is_running"]:
+            logger.info(f"Session manually stopped {battle_id}")
+            return
+
         await wait_if_paused(battle_id)
 
         update_state(battle_id, phase, seq, payload, time_left=t)
@@ -220,6 +233,44 @@ async def resume_session(battle_id: str):
     return {"status": "resumed"}
 
 # -----------------------------------------------------
+# STOP SESSION
+# -----------------------------------------------------
+
+@app.post("/session/stop/{battle_id}")
+async def stop_session(battle_id: str):
+
+    supabase.table("live_class_state").update({
+        "is_running": False,
+        "is_paused": False
+    }).eq("battle_id", battle_id).execute()
+
+    active_sessions.discard(battle_id)
+
+    broadcast_event(battle_id, "battle_end", {})
+
+    return {"status": "stopped"}
+
+# -----------------------------------------------------
+# STOP ALL SESSIONS
+# -----------------------------------------------------
+
+@app.post("/session/stop-all")
+async def stop_all_sessions():
+
+    for battle_id in list(active_sessions):
+
+        supabase.table("live_class_state").update({
+            "is_running": False,
+            "is_paused": False
+        }).eq("battle_id", battle_id).execute()
+
+        broadcast_event(battle_id, "battle_end", {})
+
+    active_sessions.clear()
+
+    return {"status": "all_sessions_stopped"}
+
+# -----------------------------------------------------
 # Fetch state
 # -----------------------------------------------------
 
@@ -259,7 +310,7 @@ async def run_live_class_engine(battle_id):
 
                 update_state(battle_id, "hyf_block", payload={"bucket": i, "hyfs": hyfs})
 
-                broadcast_event(battle_id, "hyf_block", hyfs)
+                broadcast_event(battle_id, "hyf_block", {"bucket": i, "hyfs": hyfs})
 
                 await countdown(battle_id,"hyf_block",60)
 
@@ -280,14 +331,26 @@ async def run_live_class_engine(battle_id):
 
                 payload = result.data
 
+                stats = payload.get("distribution", {})
+                leaderboard = payload.get("leaderboard", [])
+
                 update_state(
                     battle_id,
                     "mcq_result",
-                    stats=payload,
-                    leaderboard=payload.get("leaderboard",[])
+                    stats=stats,
+                    leaderboard=leaderboard
                 )
 
-                broadcast_event(battle_id,"mcq_result",payload)
+                broadcast_event(
+                    battle_id,
+                    "mcq_result",
+                    {
+                        "distribution": stats,
+                        "leaderboard": leaderboard,
+                        "explanation": payload.get("explanation"),
+                        "exam_trap": payload.get("exam_trap")
+                    }
+                )
 
                 await countdown(battle_id,"mcq_result",10)
 
