@@ -196,6 +196,27 @@ async def countdown(battle_id, phase, seconds, seq=None, payload=None):
 
         await wait_if_paused(battle_id)
 
+        # -----------------------------------------
+        # CHECK IF TEACHER PRESSED NEXT
+        # -----------------------------------------
+
+        resp = supabase.table("live_class_state") \
+            .select("force_next") \
+            .eq("battle_id", battle_id) \
+            .limit(1) \
+            .execute()
+
+        if resp.data and resp.data[0].get("force_next"):
+
+            logger.info("NEXT BUTTON PRESSED")
+
+            supabase.table("live_class_state") \
+                .update({"force_next": False}) \
+                .eq("battle_id", battle_id) \
+                .execute()
+
+            return "NEXT"
+
         update_state(battle_id, phase, seq, payload, time_left=t)
 
         broadcast_event(
@@ -207,7 +228,6 @@ async def countdown(battle_id, phase, seconds, seq=None, payload=None):
         await asyncio.sleep(1)
 
     return "OK"
-
 
 # -----------------------------------------------------
 # SAFE RESULT HANDLER
@@ -376,6 +396,19 @@ async def stop_session(battle_id: str):
 
     return {"status": "stopped"}
 
+# -----------------------------------------------------
+# NEXT PHASE (Teacher Button)
+# -----------------------------------------------------
+
+@app.post("/session/next/{battle_id}")
+async def next_phase(battle_id: str):
+
+    supabase.table("live_class_state") \
+        .update({"force_next": True}) \
+        .eq("battle_id", battle_id) \
+        .execute()
+
+    return {"status": "next_triggered"}
 
 # -----------------------------------------------------
 # Stop all sessions
