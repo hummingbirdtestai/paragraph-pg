@@ -331,7 +331,7 @@ async def run_live_class_engine(battle_id):
 
         if session_type == "mock":
 
-            questions = row["content_json"]
+            questions = row["topics_per_day"]
 
             logger.info(f"MOCK QUESTIONS COUNT {len(questions)}")
 
