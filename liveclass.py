@@ -1,5 +1,6 @@
 # -----------------------------------------------------
 # LIVE CLASS ENGINE (FINAL PRODUCTION VERSION)
+# PART 1
 # -----------------------------------------------------
 
 from fastapi import FastAPI, BackgroundTasks, HTTPException
@@ -15,6 +16,7 @@ import time
 import requests
 from datetime import datetime
 import pytz
+
 
 # -----------------------------------------------------
 # Setup
@@ -45,6 +47,7 @@ ist = pytz.timezone("Asia/Kolkata")
 
 active_sessions = set()
 
+
 # -----------------------------------------------------
 # SESSION RUNNING CHECK
 # -----------------------------------------------------
@@ -61,6 +64,7 @@ def is_session_running(battle_id):
         return False
 
     return resp.data[0]["is_running"]
+
 
 # -----------------------------------------------------
 # Realtime JWT
@@ -79,6 +83,7 @@ def get_realtime_jwt():
     }
 
     return jwt.encode(payload, SUPABASE_JWT_SECRET, algorithm="HS256")
+
 
 # -----------------------------------------------------
 # Broadcast
@@ -122,6 +127,7 @@ def broadcast_event(battle_id, event, payload):
     except Exception as e:
         logger.error(f"Broadcast failed: {e}")
 
+
 # -----------------------------------------------------
 # Update state
 # -----------------------------------------------------
@@ -146,7 +152,11 @@ def update_state(battle_id, phase, seq=None, payload=None, stats=None, leaderboa
     if leaderboard is not None:
         update["leaderboard_payload"] = leaderboard
 
-    supabase.table("live_class_state").update(update).eq("battle_id", battle_id).execute()
+    supabase.table("live_class_state") \
+        .update(update) \
+        .eq("battle_id", battle_id) \
+        .execute()
+
 
 # -----------------------------------------------------
 # Pause guard
@@ -168,6 +178,7 @@ async def wait_if_paused(battle_id):
             break
 
         await asyncio.sleep(1)
+
 
 # -----------------------------------------------------
 # Countdown
@@ -196,6 +207,7 @@ async def countdown(battle_id, phase, seconds, seq=None, payload=None):
         await asyncio.sleep(1)
 
     return "OK"
+
 
 # -----------------------------------------------------
 # SAFE RESULT HANDLER
@@ -289,6 +301,7 @@ async def start_session(battle_id: str, background_tasks: BackgroundTasks):
 
     return {"status": "started"}
 
+
 # -----------------------------------------------------
 # Pause
 # -----------------------------------------------------
@@ -300,26 +313,10 @@ async def pause_session(battle_id: str):
         "is_paused": True
     }).eq("battle_id", battle_id).execute()
 
-    state_resp = supabase.table("live_class_state") \
-        .select("*") \
-        .eq("battle_id", battle_id) \
-        .limit(1) \
-        .execute()
-
-    state = state_resp.data[0] if state_resp.data else {}
-
-    broadcast_event(
-        battle_id,
-        "paused",
-        {
-            "phase": state.get("phase"),
-            "seq": state.get("seq"),
-            "payload": state.get("payload"),
-            "time_left": state.get("time_left")
-        }
-    )
+    broadcast_event(battle_id, "paused", {})
 
     return {"status": "paused"}
+
 
 # -----------------------------------------------------
 # Resume
@@ -328,12 +325,10 @@ async def pause_session(battle_id: str):
 @app.post("/session/resume/{battle_id}")
 async def resume_session(battle_id: str):
 
-    # remove pause
     supabase.table("live_class_state").update({
         "is_paused": False
     }).eq("battle_id", battle_id).execute()
 
-    # fetch state
     state_resp = supabase.table("live_class_state") \
         .select("*") \
         .eq("battle_id", battle_id) \
@@ -345,32 +340,24 @@ async def resume_session(battle_id: str):
 
     state = state_resp.data[0]
 
-    phase = state.get("phase")
-    payload = state.get("payload")
-    seq = state.get("seq")
-    time_left = state.get("time_left")
+    broadcast_event(
+        battle_id,
+        state.get("phase"),
+        state.get("payload")
+    )
 
-    logger.info(f"RESUME BROADCAST phase={phase} seq={seq}")
-
-    # rebroadcast the phase event itself
-    if phase:
-        broadcast_event(
-            battle_id,
-            phase,
-            payload
-        )
-
-    # also send timer so FE continues countdown
     broadcast_event(
         battle_id,
         "timer",
         {
-            "phase": phase,
-            "time_left": time_left
+            "phase": state.get("phase"),
+            "time_left": state.get("time_left")
         }
     )
 
     return {"status": "resumed"}
+
+
 # -----------------------------------------------------
 # Stop session
 # -----------------------------------------------------
@@ -388,6 +375,7 @@ async def stop_session(battle_id: str):
     broadcast_event(battle_id, "battle_end", {})
 
     return {"status": "stopped"}
+
 
 # -----------------------------------------------------
 # Stop all sessions
@@ -409,6 +397,7 @@ async def stop_all_sessions():
 
     return {"status": "all_sessions_stopped"}
 
+
 # -----------------------------------------------------
 # Fetch state
 # -----------------------------------------------------
@@ -426,6 +415,7 @@ async def get_state(battle_id: str):
         raise HTTPException(status_code=404, detail="No session state")
 
     return resp.data[0]
+
 
 # -----------------------------------------------------
 # LIVE CLASS ENGINE
@@ -451,9 +441,13 @@ async def run_live_class_engine(battle_id):
 
         session_type = row.get("type")
 
+        # -------------------------------------------------
+        # MOCK TEST ENGINE
+        # -------------------------------------------------
+
         if session_type == "mock":
 
-            questions = row["topics_per_day"]
+            questions = row.get("topics_per_day", [])
 
             for i, mcq in enumerate(questions, start=1):
 
@@ -476,6 +470,99 @@ async def run_live_class_engine(battle_id):
 
             broadcast_event(battle_id, "battle_end", {})
             return
+
+
+        # -------------------------------------------------
+        # LIVE CLASS ENGINE
+        # -------------------------------------------------
+
+        topics = row.get("topics_per_day", [])
+
+        for topic in topics:
+
+            buckets = topic.get("notes_hyf", {})
+
+            # -----------------------------
+            # 5 HYF BUCKETS
+            # -----------------------------
+
+            for i in range(1, 6):
+
+                bucket = buckets.get(f"bucket_{i}", {})
+
+                hyfs = bucket.get("hyfs", [])
+
+                update_state(
+                    battle_id,
+                    "hyf_block",
+                    seq=i,
+                    payload={"bucket": i, "hyfs": hyfs}
+                )
+
+                broadcast_event(
+                    battle_id,
+                    "hyf_block",
+                    {"bucket": i, "hyfs": hyfs}
+                )
+
+                res = await countdown(battle_id, "hyf_block", 60)
+
+                if res == "STOPPED":
+                    return
+
+                # -----------------------------
+                # MCQ
+                # -----------------------------
+
+                mcq = bucket.get("mcq", [None])[0]
+
+                if not mcq:
+                    continue
+
+                update_state(battle_id, "mcq", i, payload=mcq)
+
+                broadcast_event(battle_id, "mcq", mcq)
+
+                res = await countdown(battle_id, "mcq", 30, i, mcq)
+
+                if res == "STOPPED":
+                    return
+
+                res = await handle_mcq_results(battle_id, i, mcq)
+
+                if res == "STOPPED":
+                    return
+
+            # -----------------------------
+            # IMAGE DISCUSSION
+            # -----------------------------
+
+            images = topic.get("images", [])
+
+            for img in images:
+
+                update_state(
+                    battle_id,
+                    "image_discussion",
+                    payload=img
+                )
+
+                broadcast_event(
+                    battle_id,
+                    "image_discussion",
+                    img
+                )
+
+                res = await countdown(battle_id, "image_discussion", 12)
+
+                if res == "STOPPED":
+                    return
+
+
+        update_state(battle_id, "ended")
+
+        broadcast_event(battle_id, "battle_end", {})
+
 
     except Exception as e:
 
