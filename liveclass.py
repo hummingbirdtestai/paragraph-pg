@@ -218,11 +218,14 @@ async def countdown(battle_id, phase, seconds, seq=None, payload=None):
             return "NEXT"
 
         update_state(battle_id, phase, seq, payload, time_left=t)
-
+        
         broadcast_event(
             battle_id,
             "timer",
-            {"phase": phase, "time_left": t}
+            {
+                "phase": phase if phase == "mcq" else "mcq",
+                "time_left": t
+            }
         )
 
         await asyncio.sleep(1)
@@ -261,7 +264,16 @@ async def handle_mcq_results(battle_id, seq, mcq):
             leaderboard=leaderboard
         )
 
-        broadcast_event(battle_id, "mcq_result", payload)
+        broadcast_event(
+            battle_id,
+            "mcq_result",
+            {
+                "correct_answer": mcq.get("correct_answer"),
+                "distribution": payload.get("distribution", {}),
+                "leaderboard": payload.get("leaderboard", []),
+                "source_seq": seq
+            }
+        )
 
         res = await countdown(battle_id, "mcq_result", 10)
 
@@ -370,7 +382,7 @@ async def resume_session(battle_id: str):
         battle_id,
         "timer",
         {
-            "phase": state.get("phase"),
+            "phase": "mcq" if state.get("phase") == "mcq" else "mcq",
             "time_left": state.get("time_left")
         }
     )
@@ -523,7 +535,7 @@ async def run_live_class_engine(battle_id):
 
                 bucket = buckets.get(f"bucket_{i}", {})
 
-                hyfs = bucket.get("hyfs", [])
+                hyfs = bucket.get("hyfs", {})
 
                 update_state(
                     battle_id,
@@ -535,7 +547,11 @@ async def run_live_class_engine(battle_id):
                 broadcast_event(
                     battle_id,
                     "hyf_block",
-                    {"bucket": i, "hyfs": hyfs}
+                    {
+                        "seq": i,
+                        "bucket": i,
+                        "hyfs": hyfs
+                    }
                 )
 
                 res = await countdown(battle_id, "hyf_block", 60)
@@ -570,20 +586,24 @@ async def run_live_class_engine(battle_id):
             # IMAGE DISCUSSION
             # -----------------------------
 
-            images = topic.get("images", [])
+            images = topic.get("images") or []
 
-            for img in images:
+            for idx, img in enumerate(images, start=1):
 
                 update_state(
                     battle_id,
                     "image_discussion",
+                    seq=idx,
                     payload=img
                 )
 
                 broadcast_event(
                     battle_id,
                     "image_discussion",
-                    img
+                    {
+                        "seq": idx,
+                        **img
+                    }
                 )
 
                 res = await countdown(battle_id, "image_discussion", 12)
