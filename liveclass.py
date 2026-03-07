@@ -80,7 +80,6 @@ def get_realtime_jwt():
 
     return jwt.encode(payload, SUPABASE_JWT_SECRET, algorithm="HS256")
 
-
 # -----------------------------------------------------
 # Broadcast
 # -----------------------------------------------------
@@ -230,11 +229,7 @@ async def handle_mcq_results(battle_id, seq, mcq):
             leaderboard=leaderboard
         )
 
-        broadcast_event(
-            battle_id,
-            "mcq_result",
-            payload
-        )
+        broadcast_event(battle_id, "mcq_result", payload)
 
         res = await countdown(battle_id, "mcq_result", 10)
 
@@ -258,11 +253,7 @@ async def handle_mcq_results(battle_id, seq, mcq):
             payload=explanation_payload
         )
 
-        broadcast_event(
-            battle_id,
-            "mcq_explanation",
-            explanation_payload
-        )
+        broadcast_event(battle_id, "mcq_explanation", explanation_payload)
 
         res = await countdown(battle_id, "mcq_explanation", 30)
 
@@ -309,7 +300,24 @@ async def pause_session(battle_id: str):
         "is_paused": True
     }).eq("battle_id", battle_id).execute()
 
-    broadcast_event(battle_id, "paused", {})
+    state_resp = supabase.table("live_class_state") \
+        .select("*") \
+        .eq("battle_id", battle_id) \
+        .limit(1) \
+        .execute()
+
+    state = state_resp.data[0] if state_resp.data else {}
+
+    broadcast_event(
+        battle_id,
+        "paused",
+        {
+            "phase": state.get("phase"),
+            "seq": state.get("seq"),
+            "payload": state.get("payload"),
+            "time_left": state.get("time_left")
+        }
+    )
 
     return {"status": "paused"}
 
@@ -324,7 +332,24 @@ async def resume_session(battle_id: str):
         "is_paused": False
     }).eq("battle_id", battle_id).execute()
 
-    broadcast_event(battle_id, "resumed", {})
+    state_resp = supabase.table("live_class_state") \
+        .select("*") \
+        .eq("battle_id", battle_id) \
+        .limit(1) \
+        .execute()
+
+    state = state_resp.data[0] if state_resp.data else {}
+
+    broadcast_event(
+        battle_id,
+        "resumed",
+        {
+            "phase": state.get("phase"),
+            "seq": state.get("seq"),
+            "payload": state.get("payload"),
+            "time_left": state.get("time_left")
+        }
+    )
 
     return {"status": "resumed"}
 
@@ -376,13 +401,13 @@ async def get_state(battle_id: str):
     resp = supabase.table("live_class_state") \
         .select("*") \
         .eq("battle_id", battle_id) \
-        .single() \
+        .limit(1) \
         .execute()
 
     if not resp.data:
         raise HTTPException(status_code=404, detail="No session state")
 
-    return resp.data
+    return resp.data[0]
 
 # -----------------------------------------------------
 # LIVE CLASS ENGINE
@@ -394,17 +419,19 @@ async def run_live_class_engine(battle_id):
 
         logger.info(f"ENGINE BOOT {battle_id}")
 
-        row = supabase.table("live_class_schedule") \
+        row_resp = supabase.table("live_class_schedule") \
             .select("*") \
             .eq("battle_id", battle_id) \
-            .single() \
-            .execute().data
+            .limit(1) \
+            .execute()
+
+        if not row_resp.data:
+            logger.error("SCHEDULE NOT FOUND")
+            return
+
+        row = row_resp.data[0]
 
         session_type = row.get("type")
-
-        # -------------------------------------------------
-        # MOCK TEST ENGINE
-        # -------------------------------------------------
 
         if session_type == "mock":
 
@@ -431,58 +458,6 @@ async def run_live_class_engine(battle_id):
 
             broadcast_event(battle_id, "battle_end", {})
             return
-
-        # -------------------------------------------------
-        # LIVE CLASS ENGINE
-        # -------------------------------------------------
-
-        topics = row["topics_per_day"]
-
-        for topic in topics:
-
-            buckets = topic["notes_hyf"]
-
-            for i in range(1, 6):
-
-                if not is_session_running(battle_id):
-                    return
-
-                bucket = buckets[f"bucket_{i}"]
-
-                hyfs = bucket["hyfs"]
-
-                update_state(
-                    battle_id,
-                    "hyf_block",
-                    payload={"bucket": i, "hyfs": hyfs}
-                )
-
-                broadcast_event(
-                    battle_id,
-                    "hyf_block",
-                    {"bucket": i, "hyfs": hyfs}
-                )
-
-                res = await countdown(battle_id, "hyf_block", 60)
-
-                if res == "STOPPED":
-                    return
-
-                mcq = bucket["mcq"][0]
-
-                update_state(battle_id, "mcq", i, payload=mcq)
-
-                broadcast_event(battle_id, "mcq", mcq)
-
-                res = await countdown(battle_id, "mcq", 30, i, mcq)
-
-                if res == "STOPPED":
-                    return
-
-                res = await handle_mcq_results(battle_id, i, mcq)
-
-                if res == "STOPPED":
-                    return
 
     except Exception as e:
 
