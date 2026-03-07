@@ -296,7 +296,53 @@ async def run_live_class_engine(battle_id):
 
         row = supabase.table("live_class_schedule").select("*").eq("battle_id", battle_id).single().execute().data
 
-        topics = row["topics_per_day"]
+        session_type = row.get("type")
+        
+        # MOCK TEST ENGINE
+        if session_type == "mock":
+        
+            questions = row["content_json"]
+        
+            for i, mcq in enumerate(questions, start=1):
+        
+                update_state(battle_id,"mcq",i,payload=mcq)
+        
+                broadcast_event(battle_id,"mcq",mcq)
+        
+                await countdown(battle_id,"mcq",30,i,mcq)
+        
+                result = supabase.rpc(
+                    "finalize_live_class_mcq_and_get_resultsv5",
+                    {"p_battle_id": battle_id,"p_seq": i}
+                ).execute()
+        
+                payload = result.data
+        
+                stats = payload.get("distribution", {})
+                leaderboard = payload.get("leaderboard", [])
+        
+                update_state(
+                    battle_id,
+                    "mcq_result",
+                    stats=stats,
+                    leaderboard=leaderboard
+                )
+        
+                broadcast_event(
+                    battle_id,
+                    "mcq_result",
+                    {
+                        "distribution": stats,
+                        "leaderboard": leaderboard,
+                        "explanation": payload.get("explanation"),
+                        "exam_trap": payload.get("exam_trap")
+                    }
+                )
+        
+                await countdown(battle_id,"mcq_result",10)
+        
+            broadcast_event(battle_id,"battle_end",{})
+            return
 
         for topic in topics:
 
