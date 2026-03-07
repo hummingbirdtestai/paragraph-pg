@@ -238,7 +238,7 @@ async def countdown(battle_id, phase, seconds, seq=None, payload=None):
 
 async def handle_mcq_results(battle_id, seq, mcq):
 
-    payload = None
+    row = None
 
     try:
 
@@ -247,12 +247,14 @@ async def handle_mcq_results(battle_id, seq, mcq):
             {"p_battle_id": battle_id, "p_seq": seq}
         ).execute()
 
-        payload = result.data
+        row = result.data[0] if result.data else None
 
     except Exception as e:
         logger.warning(f"RPC FAILED seq={seq} {e}")
 
-    if payload:
+    if row:
+
+        payload = row.get("payload", {})
 
         stats = payload.get("distribution", {})
         leaderboard = payload.get("leaderboard", [])
@@ -268,9 +270,9 @@ async def handle_mcq_results(battle_id, seq, mcq):
             battle_id,
             "mcq_result",
             {
-                "correct_answer": mcq.get("correct_answer"),
-                "distribution": payload.get("distribution", {}),
-                "leaderboard": payload.get("leaderboard", []),
+                "correct_answer": payload.get("correct_answer"),
+                "distribution": stats,
+                "leaderboard": leaderboard,
                 "source_seq": seq
             }
         )
@@ -297,7 +299,11 @@ async def handle_mcq_results(battle_id, seq, mcq):
             payload=explanation_payload
         )
 
-        broadcast_event(battle_id, "mcq_explanation", explanation_payload)
+        broadcast_event(
+            battle_id,
+            "mcq_explanation",
+            explanation_payload
+        )
 
         res = await countdown(battle_id, "mcq_explanation", 30)
 
@@ -313,7 +319,7 @@ async def handle_mcq_results(battle_id, seq, mcq):
 @app.post("/session/start/{battle_id}")
 async def start_session(battle_id: str, background_tasks: BackgroundTasks):
 
-    if battle_id in active_sessions:
+    if battle_id in active_sessions or is_session_running(battle_id):
         return {"status": "already_running"}
 
     supabase.table("live_class_state").upsert({
@@ -382,7 +388,7 @@ async def resume_session(battle_id: str):
         battle_id,
         "timer",
         {
-            "phase": "mcq" if state.get("phase") == "mcq" else "mcq",
+            "phase": "mcq",
             "time_left": state.get("time_left")
         }
     )
@@ -525,7 +531,7 @@ async def run_live_class_engine(battle_id):
 
         for topic in topics:
 
-            buckets = topic.get("notes_hyf", {})
+            buckets = topic.get("notes_hyf") or {}
 
             # -----------------------------
             # 5 HYF BUCKETS
@@ -563,7 +569,8 @@ async def run_live_class_engine(battle_id):
                 # MCQ
                 # -----------------------------
 
-                mcq = bucket.get("mcq", [None])[0]
+                mcq_list = bucket.get("mcq") or []
+                mcq = mcq_list[0] if mcq_list else None
 
                 if not mcq:
                     continue
