@@ -63,6 +63,7 @@ def get_realtime_jwt():
 
     return jwt.encode(payload, SUPABASE_JWT_SECRET, algorithm="HS256")
 
+
 # -----------------------------------------------------
 # Broadcast
 # -----------------------------------------------------
@@ -105,6 +106,7 @@ def broadcast_event(battle_id, event, payload):
     except Exception as e:
         logger.error(f"Broadcast failed: {e}")
 
+
 # -----------------------------------------------------
 # Update state
 # -----------------------------------------------------
@@ -133,6 +135,7 @@ def update_state(battle_id, phase, seq=None, payload=None, stats=None, leaderboa
 
     supabase.table("live_class_state").update(update).eq("battle_id", battle_id).execute()
 
+
 # -----------------------------------------------------
 # Pause guard
 # -----------------------------------------------------
@@ -154,6 +157,7 @@ async def wait_if_paused(battle_id):
 
         logger.info(f"SESSION PAUSED {battle_id}")
         await asyncio.sleep(1)
+
 
 # -----------------------------------------------------
 # Countdown helper
@@ -187,6 +191,91 @@ async def countdown(battle_id, phase, seconds, seq=None, payload=None):
 
         await asyncio.sleep(1)
 
+
+# -----------------------------------------------------
+# SAFE RESULT HANDLER
+# -----------------------------------------------------
+
+async def handle_mcq_results(battle_id, seq, mcq):
+
+    payload = None
+
+    try:
+
+        result = supabase.rpc(
+            "finalize_live_class_mcq_and_get_resultsv5",
+            {"p_battle_id": battle_id, "p_seq": seq}
+        ).execute()
+
+        payload = result.data
+
+        logger.info(f"RPC RESULT {payload}")
+
+    except Exception as rpc_error:
+
+        logger.warning(f"RPC FAILED seq={seq} error={rpc_error}")
+
+    # -----------------------------------
+    # If answers exist
+    # -----------------------------------
+
+    if payload:
+
+        stats = payload.get("distribution", {})
+        leaderboard = payload.get("leaderboard", [])
+
+        update_state(
+            battle_id,
+            "mcq_result",
+            stats=stats,
+            leaderboard=leaderboard
+        )
+
+        broadcast_event(
+            battle_id,
+            "mcq_result",
+            {
+                "distribution": stats,
+                "leaderboard": leaderboard,
+                "explanation": payload.get("explanation"),
+                "exam_trap": payload.get("exam_trap")
+            }
+        )
+
+        await countdown(battle_id, "mcq_result", 10)
+
+    # -----------------------------------
+    # If NO answers
+    # -----------------------------------
+
+    else:
+
+        logger.info(f"NO ANSWERS SUBMITTED seq={seq}")
+
+        explanation_payload = {
+            "correct_answer": mcq.get("correct_answer"),
+            "learning_gap": mcq.get("learning_gap"),
+            "high_yield_facts": mcq.get("high_yield_facts"),
+            "image_description": mcq.get("image_description"),
+            "image_url": mcq.get("image_url")
+        }
+
+        update_state(
+            battle_id,
+            "mcq_explanation",
+            seq=seq,
+            payload=explanation_payload
+        )
+
+        broadcast_event(
+            battle_id,
+            "mcq_explanation",
+            explanation_payload
+        )
+
+        await countdown(battle_id, "mcq_explanation", 30)
+
+
 # -----------------------------------------------------
 # Start session
 # -----------------------------------------------------
@@ -197,7 +286,6 @@ async def start_session(battle_id: str, background_tasks: BackgroundTasks):
     logger.info(f"START REQUEST RECEIVED {battle_id}")
 
     if battle_id in active_sessions:
-        logger.info("SESSION ALREADY RUNNING")
         return {"status": "already_running"}
 
     supabase.table("live_class_state").upsert({
@@ -217,6 +305,7 @@ async def start_session(battle_id: str, background_tasks: BackgroundTasks):
 
     return {"status": "started"}
 
+
 # -----------------------------------------------------
 # Pause
 # -----------------------------------------------------
@@ -224,13 +313,12 @@ async def start_session(battle_id: str, background_tasks: BackgroundTasks):
 @app.post("/session/pause/{battle_id}")
 async def pause_session(battle_id: str):
 
-    logger.info(f"PAUSE REQUEST {battle_id}")
-
     supabase.table("live_class_state").update({"is_paused": True}).eq("battle_id", battle_id).execute()
 
     broadcast_event(battle_id, "paused", {})
 
     return {"status": "paused"}
+
 
 # -----------------------------------------------------
 # Resume
@@ -239,13 +327,12 @@ async def pause_session(battle_id: str):
 @app.post("/session/resume/{battle_id}")
 async def resume_session(battle_id: str):
 
-    logger.info(f"RESUME REQUEST {battle_id}")
-
     supabase.table("live_class_state").update({"is_paused": False}).eq("battle_id", battle_id).execute()
 
     broadcast_event(battle_id, "resumed", {})
 
     return {"status": "resumed"}
+
 
 # -----------------------------------------------------
 # Stop session
@@ -253,8 +340,6 @@ async def resume_session(battle_id: str):
 
 @app.post("/session/stop/{battle_id}")
 async def stop_session(battle_id: str):
-
-    logger.info(f"STOP REQUEST {battle_id}")
 
     supabase.table("live_class_state").update({
         "is_running": False,
@@ -267,45 +352,6 @@ async def stop_session(battle_id: str):
 
     return {"status": "stopped"}
 
-# -----------------------------------------------------
-# Stop all sessions
-# -----------------------------------------------------
-
-@app.post("/session/stop-all")
-async def stop_all_sessions():
-
-    logger.info("STOP ALL SESSIONS REQUEST")
-
-    for battle_id in list(active_sessions):
-
-        supabase.table("live_class_state").update({
-            "is_running": False,
-            "is_paused": False
-        }).eq("battle_id", battle_id).execute()
-
-        broadcast_event(battle_id, "battle_end", {})
-
-    active_sessions.clear()
-
-    return {"status": "all_sessions_stopped"}
-
-# -----------------------------------------------------
-# Fetch state
-# -----------------------------------------------------
-
-@app.get("/session/state/{battle_id}")
-async def get_state(battle_id: str):
-
-    logger.info(f"STATE FETCH REQUEST {battle_id}")
-
-    resp = supabase.table("live_class_state").select("*").eq("battle_id", battle_id).single().execute()
-
-    logger.info(f"STATE RESULT {resp.data}")
-
-    if not resp.data:
-        raise HTTPException(status_code=404, detail="No session state")
-
-    return resp.data
 
 # -----------------------------------------------------
 # LIVE CLASS ENGINE
@@ -319,11 +365,7 @@ async def run_live_class_engine(battle_id):
 
         row = supabase.table("live_class_schedule").select("*").eq("battle_id", battle_id).single().execute().data
 
-        logger.info(f"SCHEDULE ROW LOADED {row}")
-
         session_type = row.get("type")
-
-        logger.info(f"SESSION TYPE DETECTED {session_type}")
 
         # -------------------------------------------------
         # MOCK TEST ENGINE
@@ -333,51 +375,17 @@ async def run_live_class_engine(battle_id):
 
             questions = row["topics_per_day"]
 
-            logger.info(f"MOCK QUESTIONS COUNT {len(questions)}")
-
             for i, mcq in enumerate(questions, start=1):
 
-                logger.info(f"MCQ START {i}")
+                update_state(battle_id, "mcq", i, payload=mcq)
 
-                update_state(battle_id,"mcq",i,payload=mcq)
+                broadcast_event(battle_id, "mcq", mcq)
 
-                broadcast_event(battle_id,"mcq",mcq)
+                await countdown(battle_id, "mcq", 30, i, mcq)
 
-                await countdown(battle_id,"mcq",30,i,mcq)
+                await handle_mcq_results(battle_id, i, mcq)
 
-                result = supabase.rpc(
-                    "finalize_live_class_mcq_and_get_resultsv5",
-                    {"p_battle_id": battle_id,"p_seq": i}
-                ).execute()
-
-                logger.info(f"RPC RESULT {result.data}")
-
-                payload = result.data
-
-                stats = payload.get("distribution", {})
-                leaderboard = payload.get("leaderboard", [])
-
-                update_state(
-                    battle_id,
-                    "mcq_result",
-                    stats=stats,
-                    leaderboard=leaderboard
-                )
-
-                broadcast_event(
-                    battle_id,
-                    "mcq_result",
-                    {
-                        "distribution": stats,
-                        "leaderboard": leaderboard,
-                        "explanation": payload.get("explanation"),
-                        "exam_trap": payload.get("exam_trap")
-                    }
-                )
-
-                await countdown(battle_id,"mcq_result",10)
-
-            broadcast_event(battle_id,"battle_end",{})
+            broadcast_event(battle_id, "battle_end", {})
             return
 
         # -------------------------------------------------
@@ -386,15 +394,11 @@ async def run_live_class_engine(battle_id):
 
         topics = row["topics_per_day"]
 
-        logger.info(f"LIVE CLASS TOPICS COUNT {len(topics)}")
-
         for topic in topics:
 
             buckets = topic["notes_hyf"]
 
-            for i in range(1,6):
-
-                logger.info(f"HYF BUCKET START {i}")
+            for i in range(1, 6):
 
                 bucket = buckets[f"bucket_{i}"]
 
@@ -404,63 +408,17 @@ async def run_live_class_engine(battle_id):
 
                 broadcast_event(battle_id, "hyf_block", {"bucket": i, "hyfs": hyfs})
 
-                await countdown(battle_id,"hyf_block",60)
+                await countdown(battle_id, "hyf_block", 60)
 
                 mcq = bucket["mcq"][0]
 
-                seq = i
+                update_state(battle_id, "mcq", i, payload=mcq)
 
-                update_state(battle_id,"mcq",seq,payload=mcq)
+                broadcast_event(battle_id, "mcq", mcq)
 
-                broadcast_event(battle_id,"mcq",mcq)
+                await countdown(battle_id, "mcq", 30, i, mcq)
 
-                await countdown(battle_id,"mcq",30,seq,mcq)
-
-                result = supabase.rpc(
-                    "finalize_live_class_mcq_and_get_resultsv5",
-                    {"p_battle_id": battle_id,"p_seq": seq}
-                ).execute()
-
-                logger.info(f"RPC RESULT {result.data}")
-
-                payload = result.data
-
-                stats = payload.get("distribution", {})
-                leaderboard = payload.get("leaderboard", [])
-
-                update_state(
-                    battle_id,
-                    "mcq_result",
-                    stats=stats,
-                    leaderboard=leaderboard
-                )
-
-                broadcast_event(
-                    battle_id,
-                    "mcq_result",
-                    {
-                        "distribution": stats,
-                        "leaderboard": leaderboard,
-                        "explanation": payload.get("explanation"),
-                        "exam_trap": payload.get("exam_trap")
-                    }
-                )
-
-                await countdown(battle_id,"mcq_result",10)
-
-            for img in topic["images"]:
-
-                logger.info("IMAGE DISCUSSION")
-
-                update_state(battle_id,"image_discussion",payload=img)
-
-                broadcast_event(battle_id,"image_discussion",img)
-
-                await countdown(battle_id,"image_discussion",12)
-
-        update_state(battle_id,"ended")
-
-        broadcast_event(battle_id,"battle_end",{})
+                await handle_mcq_results(battle_id, i, mcq)
 
     except Exception as e:
 
@@ -472,6 +430,6 @@ async def run_live_class_engine(battle_id):
 
         supabase.table("live_class_state").update({
             "is_running": False
-        }).eq("battle_id",battle_id).execute()
+        }).eq("battle_id", battle_id).execute()
 
         logger.info(f"LIVE CLASS COMPLETED {battle_id}")
