@@ -250,7 +250,7 @@ async def handle_mcq_results(battle_id, seq, mcq):
             }
         ).execute()
 
-        row = result.data[0] if result.data else None
+        row = result.data[0]["finalize_live_class_mcq_and_get_resultsv10"] if result.data else None
 
     except Exception as e:
         logger.warning(f"RPC FAILED seq={seq} {e}")
