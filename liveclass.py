@@ -523,7 +523,7 @@ async def run_live_class_engine(battle_id):
                 
                 broadcast_event(battle_id, "mcq", mcq_payload)
 
-                res = await countdown(battle_id, "mcq", 30, i, mcq)
+                res = await countdown(battle_id, "mcq", 30, i)
 
                 if res == "STOPPED":
                     return
@@ -600,7 +600,7 @@ async def run_live_class_engine(battle_id):
                 
                 broadcast_event(battle_id, "mcq", mcq_payload)
                 
-                res = await countdown(battle_id, "mcq", 30, seq_counter, mcq_payload)
+                res = await countdown(battle_id, "mcq", 30, seq_counter)
                 
                 if res == "STOPPED":
                     return
