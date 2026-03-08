@@ -243,8 +243,11 @@ async def handle_mcq_results(battle_id, seq, mcq):
     try:
 
         result = supabase.rpc(
-            "finalize_live_class_mcq_and_get_resultsv5",
-            {"p_battle_id": battle_id, "p_seq": seq}
+            "finalize_live_class_mcq_and_get_resultsv10",
+            {
+                "p_battle_id": battle_id,
+                "p_seq": seq
+            }
         ).execute()
 
         row = result.data[0] if result.data else None
@@ -270,7 +273,6 @@ async def handle_mcq_results(battle_id, seq, mcq):
             battle_id,
             "mcq_result",
             {
-                "correct_answer": payload.get("correct_answer"),
                 "distribution": stats,
                 "leaderboard": leaderboard,
                 "source_seq": seq
