@@ -292,8 +292,8 @@ async def handle_mcq_results(battle_id, seq, mcq):
     explanation_payload = {
         "seq": seq,
         "correct_answer": mcq.get("correct_answer"),
-        "learning_gap": mcq.get("learning_gap"),
-        "high_yield_facts": mcq.get("high_yield_facts"),
+        "learning_gap": mcq.get("learning_gap") or mcq.get("answer"),
+        "high_yield_facts": mcq.get("high_yield_facts") or mcq.get("exam_trap"),
         "image_description": mcq.get("image_description"),
         "image_url": mcq.get("image_url")
     }
