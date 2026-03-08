@@ -196,10 +196,6 @@ async def countdown(battle_id, phase, seconds, seq=None, payload=None):
 
         await wait_if_paused(battle_id)
 
-        # -----------------------------------------
-        # CHECK IF TEACHER PRESSED NEXT
-        # -----------------------------------------
-
         resp = supabase.table("live_class_state") \
             .select("force_next") \
             .eq("battle_id", battle_id) \
@@ -217,13 +213,14 @@ async def countdown(battle_id, phase, seconds, seq=None, payload=None):
 
             return "NEXT"
 
-        update_state(battle_id, phase, seq, payload, time_left=t)
-        
+        # ⚠️ DO NOT overwrite payload
+        update_state(battle_id, phase, seq, time_left=t)
+
         broadcast_event(
             battle_id,
             "timer",
             {
-                "phase": phase if phase == "mcq" else "mcq",
+                "phase": phase,
                 "time_left": t
             }
         )
@@ -241,6 +238,8 @@ async def handle_mcq_results(battle_id, seq, mcq):
     row = None
 
     try:
+
+        logger.info(f"CALLING RESULT RPC seq={seq}")
 
         result = supabase.rpc(
             "finalize_live_class_mcq_and_get_resultsv10",
