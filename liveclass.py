@@ -233,10 +233,6 @@ async def countdown(battle_id, phase, seconds, seq=None, payload=None):
 # SAFE RESULT HANDLER
 # -----------------------------------------------------
 
-# -----------------------------------------------------
-# RESULT HANDLER
-# -----------------------------------------------------
-
 async def handle_mcq_results(battle_id, seq, mcq):
 
     try:
@@ -251,7 +247,8 @@ async def handle_mcq_results(battle_id, seq, mcq):
             }
         ).execute()
 
-        row = result.data[0]["finalize_live_class_mcq_and_get_resultsv10"]
+        # DO NOT PARSE ANYTHING
+        row = result.data
 
     except Exception as e:
 
