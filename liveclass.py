@@ -302,7 +302,10 @@ async def handle_mcq_results(battle_id, seq, mcq):
         broadcast_event(
             battle_id,
             "mcq_explanation",
-            explanation_payload
+            {
+                "seq": seq,
+                **explanation_payload
+            }
         )
 
         res = await countdown(battle_id, "mcq_explanation", 30)
@@ -505,9 +508,14 @@ async def run_live_class_engine(battle_id):
                 if not is_session_running(battle_id):
                     return
 
-                update_state(battle_id, "mcq", i, payload=mcq)
-
-                broadcast_event(battle_id, "mcq", mcq)
+                mcq_payload = {
+                    "seq": i,
+                    **mcq
+                }
+                
+                update_state(battle_id, "mcq", i, payload=mcq_payload)
+                
+                broadcast_event(battle_id, "mcq", mcq_payload)
 
                 res = await countdown(battle_id, "mcq", 30, i, mcq)
 
@@ -528,6 +536,8 @@ async def run_live_class_engine(battle_id):
         # -------------------------------------------------
 
         topics = row.get("topics_per_day", [])
+
+        seq_counter = 1
 
         for topic in topics:
 
@@ -571,23 +581,30 @@ async def run_live_class_engine(battle_id):
 
                 mcq_list = bucket.get("mcq") or []
                 mcq = mcq_list[0] if mcq_list else None
-
+                
                 if not mcq:
                     continue
-
-                update_state(battle_id, "mcq", i, payload=mcq)
-
-                broadcast_event(battle_id, "mcq", mcq)
-
-                res = await countdown(battle_id, "mcq", 30, i, mcq)
-
+                
+                mcq_payload = {
+                    "seq": seq_counter,
+                    **mcq
+                }
+                
+                update_state(battle_id, "mcq", seq_counter, payload=mcq_payload)
+                
+                broadcast_event(battle_id, "mcq", mcq_payload)
+                
+                res = await countdown(battle_id, "mcq", 30, seq_counter, mcq_payload)
+                
                 if res == "STOPPED":
                     return
-
-                res = await handle_mcq_results(battle_id, i, mcq)
-
+                
+                res = await handle_mcq_results(battle_id, seq_counter, mcq)
+                
                 if res == "STOPPED":
                     return
+                
+                seq_counter += 1
 
             # -----------------------------
             # IMAGE DISCUSSION
