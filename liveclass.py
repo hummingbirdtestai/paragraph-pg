@@ -260,18 +260,18 @@ async def handle_mcq_results(battle_id, seq, mcq):
 
     if row:
 
-        payload = row.get("payload", {})
-
-        stats = payload.get("distribution", {})
-        leaderboard = payload.get("leaderboard", [])
-
+        payload = row["payload"]
+    
+        stats = payload["distribution"]
+        leaderboard = payload["leaderboard"]
+    
         update_state(
             battle_id,
             "mcq_result",
             stats=stats,
             leaderboard=leaderboard
         )
-
+    
         broadcast_event(
             battle_id,
             "mcq_result",
@@ -281,9 +281,9 @@ async def handle_mcq_results(battle_id, seq, mcq):
                 "source_seq": seq
             }
         )
-
+    
         res = await countdown(battle_id, "mcq_result", 10)
-
+    
         if res == "STOPPED":
             return "STOPPED"
 
