@@ -233,9 +233,11 @@ async def countdown(battle_id, phase, seconds, seq=None, payload=None):
 # SAFE RESULT HANDLER
 # -----------------------------------------------------
 
-async def handle_mcq_results(battle_id, seq, mcq):
+# -----------------------------------------------------
+# RESULT HANDLER
+# -----------------------------------------------------
 
-    row = None
+async def handle_mcq_results(battle_id, seq, mcq):
 
     try:
 
@@ -249,74 +251,73 @@ async def handle_mcq_results(battle_id, seq, mcq):
             }
         ).execute()
 
-        row = None
-        
-        if result.data:
-            rpc_row = result.data[0]
-            row = rpc_row.get("finalize_live_class_mcq_and_get_resultsv10")
+        row = result.data[0]["finalize_live_class_mcq_and_get_resultsv10"]
 
     except Exception as e:
-        logger.warning(f"RPC FAILED seq={seq} {e}")
 
-    if row:
+        logger.error(f"RESULT RPC FAILED seq={seq} {e}")
+        return "OK"
 
-        payload = row["payload"]
-    
-        stats = payload["distribution"]
-        leaderboard = payload["leaderboard"]
-    
-        update_state(
-            battle_id,
-            "mcq_result",
-            stats=stats,
-            leaderboard=leaderboard
-        )
-    
-        broadcast_event(
-            battle_id,
-            "mcq_result",
-            {
-                "distribution": stats,
-                "leaderboard": leaderboard,
-                "source_seq": seq
-            }
-        )
-    
-        res = await countdown(battle_id, "mcq_result", 10)
-    
-        if res == "STOPPED":
-            return "STOPPED"
+    # -------------------------------------------------
+    # STORE EXACT RPC RESPONSE
+    # -------------------------------------------------
 
-    else:
+    update_state(
+        battle_id,
+        "mcq_result",
+        seq=seq,
+        payload=row
+    )
 
-        explanation_payload = {
-            "correct_answer": mcq.get("correct_answer"),
-            "learning_gap": mcq.get("learning_gap"),
-            "high_yield_facts": mcq.get("high_yield_facts"),
-            "image_description": mcq.get("image_description"),
-            "image_url": mcq.get("image_url")
-        }
+    # -------------------------------------------------
+    # BROADCAST EXACT RPC RESPONSE
+    # -------------------------------------------------
 
-        update_state(
-            battle_id,
-            "mcq_explanation",
-            seq=seq,
-            payload=explanation_payload
-        )
+    broadcast_event(
+        battle_id,
+        "mcq_result",
+        row
+    )
 
-        broadcast_event(
-            battle_id,
-            "mcq_explanation",
-            {
-                "seq": seq,
-                **explanation_payload
-            }
-        )
+    # -------------------------------------------------
+    # RESULT SCREEN COUNTDOWN
+    # -------------------------------------------------
 
-        res = await countdown(battle_id, "mcq_explanation", 30)
+    res = await countdown(battle_id, "mcq_result", 10)
 
-        if res == "STOPPED":
-            return "STOPPED"
+    if res == "STOPPED":
+        return "STOPPED"
+
+    # -------------------------------------------------
+    # EXPLANATION PHASE
+    # -------------------------------------------------
+
+    explanation_payload = {
+        "seq": seq,
+        "correct_answer": mcq.get("correct_answer"),
+        "learning_gap": mcq.get("learning_gap"),
+        "high_yield_facts": mcq.get("high_yield_facts"),
+        "image_description": mcq.get("image_description"),
+        "image_url": mcq.get("image_url")
+    }
+
+    update_state(
+        battle_id,
+        "mcq_explanation",
+        seq=seq,
+        payload=explanation_payload
+    )
+
+    broadcast_event(
+        battle_id,
+        "mcq_explanation",
+        explanation_payload
+    )
+
+    res = await countdown(battle_id, "mcq_explanation", 30)
+
+    if res == "STOPPED":
+        return "STOPPED"
 
     return "OK"
 
