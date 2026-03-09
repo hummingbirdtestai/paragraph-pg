@@ -620,27 +620,33 @@ async def run_live_class_engine(battle_id):
             # -----------------------------
 
             images = topic.get("images") or []
-
-            for idx, img in enumerate(images, start=1):
-
+            
+            logger.info(f"IMAGE DISCUSSION START count={len(images)}")
+            
+            for img in images:
+            
+                seq_counter += 1
+            
+                payload = {
+                    "seq": seq_counter,
+                    **img
+                }
+            
                 update_state(
                     battle_id,
                     "image_discussion",
-                    seq=idx,
-                    payload=img
+                    seq=seq_counter,
+                    payload=payload
                 )
-
+            
                 broadcast_event(
                     battle_id,
                     "image_discussion",
-                    {
-                        "seq": idx,
-                        **img
-                    }
+                    payload
                 )
-
+            
                 res = await countdown(battle_id, "image_discussion", 12)
-
+            
                 if res == "STOPPED":
                     return
 
