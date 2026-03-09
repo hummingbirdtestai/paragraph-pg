@@ -250,6 +250,12 @@ async def handle_mcq_results(battle_id, seq, mcq):
         # DO NOT PARSE ANYTHING
         row = result.data
 
+        # APPEND MCQ WITHOUT TOUCHING RPC OUTPUT
+        payload = {
+            "mcq": mcq,
+            "rpc": row
+        }
+
     except Exception as e:
 
         logger.error(f"RESULT RPC FAILED seq={seq} {e}")
