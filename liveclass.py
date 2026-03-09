@@ -269,7 +269,7 @@ async def handle_mcq_results(battle_id, seq, mcq):
         battle_id,
         "mcq_result",
         seq=seq,
-        payload=row
+        payload=payload
     )
 
     # -------------------------------------------------
@@ -279,7 +279,7 @@ async def handle_mcq_results(battle_id, seq, mcq):
     broadcast_event(
         battle_id,
         "mcq_result",
-        row
+        payload
     )
 
     # -------------------------------------------------
