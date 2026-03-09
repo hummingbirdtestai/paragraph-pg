@@ -187,6 +187,7 @@ async def wait_if_paused(battle_id):
 async def countdown(battle_id, phase, seconds, seq=None, payload=None):
 
     logger.info(f"COUNTDOWN START {battle_id} {phase}")
+    logger.info(f"COUNTDOWN START battle={battle_id} phase={phase} seq={seq}")
 
     for t in range(seconds, 0, -1):
 
@@ -227,6 +228,8 @@ async def countdown(battle_id, phase, seconds, seq=None, payload=None):
 
         await asyncio.sleep(1)
 
+        logger.info(f"TIMER TICK phase={phase} t={t}")
+
     return "OK"
 
 # -----------------------------------------------------
@@ -238,7 +241,9 @@ async def handle_mcq_results(battle_id, seq, mcq):
     try:
 
         logger.info(f"CALLING RESULT RPC seq={seq}")
-
+        
+        logger.info(f"RPC START seq={seq}")
+        
         result = supabase.rpc(
             "finalize_live_class_mcq_and_get_resultsv10",
             {
@@ -249,6 +254,7 @@ async def handle_mcq_results(battle_id, seq, mcq):
 
         # DO NOT PARSE ANYTHING
         row = result.data
+        logger.info(f"RPC RESPONSE = {row}")
 
         # APPEND MCQ WITHOUT TOUCHING RPC OUTPUT
         payload = {
@@ -496,11 +502,15 @@ async def run_live_class_engine(battle_id):
             .limit(1) \
             .execute()
 
+        logger.info(f"SCHEDULE RESPONSE = {row_resp.data}")
+        
         if not row_resp.data:
             logger.error("SCHEDULE NOT FOUND")
             return
 
         row = row_resp.data[0]
+
+        logger.info(f"SCHEDULE ROW LOADED battle_id={battle_id}")
 
         session_type = row.get("type")
 
@@ -546,11 +556,20 @@ async def run_live_class_engine(battle_id):
 
         topics = row.get("topics_per_day", [])
 
+        logger.info(f"TOPICS COUNT = {len(topics)}")
+
         seq_counter = 1
 
         for topic in topics:
+        
+            logger.info("------------------------------------------------")
+            logger.info(f"TOPIC START")
+            logger.info(f"TOPIC DATA = {topic}")
 
             buckets = topic.get("notes_hyf") or {}
+
+            logger.info(f"BUCKET OBJECT = {buckets}")
+            logger.info(f"IMAGE COUNT IN TOPIC = {len(topic.get('images') or [])}")
 
             # -----------------------------
             # 5 HYF BUCKETS
@@ -558,9 +577,13 @@ async def run_live_class_engine(battle_id):
 
             for i in range(1, 6):
 
+            logger.info(f"BUCKET START bucket_{i}")
+
                 bucket = buckets.get(f"bucket_{i}", {})
 
                 hyfs = bucket.get("hyfs", {})
+
+                logger.info(f"HYF COUNT = {len(hyfs)}")
 
                 update_state(
                     battle_id,
@@ -589,7 +612,11 @@ async def run_live_class_engine(battle_id):
                 # -----------------------------
 
                 mcq_list = bucket.get("mcq") or []
+                logger.info(f"MCQ LIST LENGTH = {len(mcq_list)}")
+                
                 mcq = mcq_list[0] if mcq_list else None
+
+                logger.info(f"MCQ SELECTED = {mcq}")
                 
                 if not mcq:
                     continue
@@ -602,6 +629,8 @@ async def run_live_class_engine(battle_id):
                 update_state(battle_id, "mcq", seq_counter, payload=mcq_payload)
                 
                 broadcast_event(battle_id, "mcq", mcq_payload)
+
+                logger.info(f"MCQ BROADCASTED seq={seq_counter}")
                 
                 res = await countdown(battle_id, "mcq", 30, seq_counter)
                 
@@ -614,16 +643,25 @@ async def run_live_class_engine(battle_id):
                     return
                 
                 seq_counter += 1
+                logger.info(f"BUCKET COMPLETE bucket_{i}")
 
             # -----------------------------
             # IMAGE DISCUSSION
             # -----------------------------
+            logger.info("================================")
+            logger.info("ENTERING IMAGE DISCUSSION")
+            logger.info("================================")
 
             images = topic.get("images") or []
+
+            logger.info(f"IMAGES ARRAY = {images}")
+            logger.info(f"IMAGE COUNT = {len(images)}")
             
             logger.info(f"IMAGE DISCUSSION START count={len(images)}")
             
             for img in images:
+
+            logger.info(f"IMAGE LOOP START img={img}")
             
                 seq_counter += 1
             
@@ -631,6 +669,8 @@ async def run_live_class_engine(battle_id):
                     "seq": seq_counter,
                     **img
                 }
+
+                logger.info(f"IMAGE PAYLOAD = {payload}")
             
                 update_state(
                     battle_id,
@@ -639,11 +679,14 @@ async def run_live_class_engine(battle_id):
                     payload=payload
                 )
             
+            
                 broadcast_event(
                     battle_id,
                     "image_discussion",
                     payload
                 )
+
+                logger.info(f"IMAGE BROADCAST SENT seq={seq_counter}")
             
                 res = await countdown(battle_id, "image_discussion", 12)
             
