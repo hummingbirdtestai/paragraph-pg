@@ -186,7 +186,7 @@ async def wait_if_paused(battle_id):
 
 async def countdown(battle_id, phase, seconds, seq=None, payload=None):
 
-    logger.info(f"COUNTDOWN START {battle_id} {phase}")
+    
     logger.info(f"COUNTDOWN START battle={battle_id} phase={phase} seq={seq}")
 
     for t in range(seconds, 0, -1):
@@ -226,9 +226,10 @@ async def countdown(battle_id, phase, seconds, seq=None, payload=None):
             }
         )
 
-        await asyncio.sleep(1)
+        
 
         logger.info(f"TIMER TICK phase={phase} t={t}")
+        await asyncio.sleep(1)
 
     return "OK"
 
@@ -577,7 +578,7 @@ async def run_live_class_engine(battle_id):
 
             for i in range(1, 6):
 
-            logger.info(f"BUCKET START bucket_{i}")
+                logger.info(f"BUCKET START bucket_{i}")
 
                 bucket = buckets.get(f"bucket_{i}", {})
 
@@ -661,7 +662,7 @@ async def run_live_class_engine(battle_id):
             
             for img in images:
 
-            logger.info(f"IMAGE LOOP START img={img}")
+                logger.info(f"IMAGE LOOP START img={img}")
             
                 seq_counter += 1
             
