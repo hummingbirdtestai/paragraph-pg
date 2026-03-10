@@ -3,7 +3,7 @@
 # PART 1
 # -----------------------------------------------------
 
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client
 from dotenv import load_dotenv
@@ -90,7 +90,7 @@ def get_realtime_jwt():
 # -----------------------------------------------------
 
 def broadcast_event(battle_id, event, payload):
-
+logger.info(f"EVENT → {event}")
     try:
 
         logger.info(f"BROADCAST EVENT {event} for {battle_id}")
@@ -491,25 +491,34 @@ async def get_state(battle_id: str):
 # -----------------------------------------------------
 
 @app.post("/presence/leave")
-async def presence_leave(data: dict):
+async def presence_leave(request: Request):
 
     try:
 
-        supabase.rpc(
+        # read raw beacon body
+        data = await request.json()
+
+        logger.info("🚪 PRESENCE LEAVE API HIT")
+        logger.info(f"🚪 Payload received: {data}")
+
+        result = supabase.rpc(
             "live_class_presence_v1",
             {
-                "p_battle_id": data["battle_id"],
-                "p_user_name": data["user_name"],
-                "p_phone_number": data["phone_number"],
+                "p_battle_id": data.get("battle_id"),
+                "p_user_name": data.get("user_name"),
+                "p_phone_number": data.get("phone_number"),
                 "p_action": "leave"
             }
         ).execute()
+
+        logger.info(f"🚪 RPC RESULT: {result.data}")
 
         return {"status": "logged"}
 
     except Exception as e:
 
-        logger.error(f"Presence leave failed {e}")
+        logger.error(f"🚨 Presence leave failed: {e}")
+
         return {"status": "error"}
         
 # -----------------------------------------------------
