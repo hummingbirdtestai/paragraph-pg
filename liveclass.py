@@ -90,7 +90,7 @@ def get_realtime_jwt():
 # -----------------------------------------------------
 
 def broadcast_event(battle_id, event, payload):
-logger.info(f"EVENT → {event}")
+    logger.info(f"EVENT → {event}")
     try:
 
         logger.info(f"BROADCAST EVENT {event} for {battle_id}")
