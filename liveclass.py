@@ -486,7 +486,32 @@ async def get_state(battle_id: str):
 
     return resp.data[0]
 
+# -----------------------------------------------------
+# PRESENCE LEAVE (Beacon endpoint)
+# -----------------------------------------------------
 
+@app.post("/presence/leave")
+async def presence_leave(data: dict):
+
+    try:
+
+        supabase.rpc(
+            "live_class_presence_v1",
+            {
+                "p_battle_id": data["battle_id"],
+                "p_user_name": data["user_name"],
+                "p_phone_number": data["phone_number"],
+                "p_action": "leave"
+            }
+        ).execute()
+
+        return {"status": "logged"}
+
+    except Exception as e:
+
+        logger.error(f"Presence leave failed {e}")
+        return {"status": "error"}
+        
 # -----------------------------------------------------
 # LIVE CLASS ENGINE
 # -----------------------------------------------------
