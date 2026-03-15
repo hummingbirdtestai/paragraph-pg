@@ -238,17 +238,14 @@ async def countdown(battle_id, phase, seconds, seq=None, payload=None):
 
         state = resp.data[0] if resp.data else {}
 
-        # session stopped
         if not state.get("is_running"):
             logger.info(f"SESSION STOPPED {battle_id}")
             return "STOPPED"
 
-        # pause → do NOT decrement timer
         if state.get("is_paused"):
             await asyncio.sleep(1)
             continue
 
-        # teacher pressed NEXT
         if state.get("force_next"):
 
             logger.info("NEXT BUTTON PRESSED")
@@ -260,7 +257,6 @@ async def countdown(battle_id, phase, seconds, seq=None, payload=None):
 
             return "NEXT"
 
-        # update state
         update_state(battle_id, phase, seq, time_left=t)
 
         broadcast_event(
@@ -276,7 +272,6 @@ async def countdown(battle_id, phase, seconds, seq=None, payload=None):
 
         await asyncio.sleep(1)
 
-        # decrement only after a real second passes
         t -= 1
 
     return "OK"
