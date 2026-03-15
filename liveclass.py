@@ -223,14 +223,11 @@ async def engine_pause_guard(battle_id):
 
 async def countdown(battle_id, phase, seconds, seq=None, payload=None):
 
-    
     logger.info(f"COUNTDOWN START battle={battle_id} phase={phase} seq={seq}")
 
-    for t in range(seconds, 0, -1):
+    t = seconds
 
-        if not is_session_running(battle_id):
-            logger.info(f"SESSION STOPPED {battle_id}")
-            return "STOPPED"
+    while t > 0:
 
         resp = await safe_execute(
             supabase.table("live_class_state")
@@ -238,18 +235,21 @@ async def countdown(battle_id, phase, seconds, seq=None, payload=None):
             .eq("battle_id", battle_id)
             .limit(1)
         )
-        
+
         state = resp.data[0] if resp.data else {}
-        
+
+        # session stopped
         if not state.get("is_running"):
             logger.info(f"SESSION STOPPED {battle_id}")
             return "STOPPED"
-        
+
+        # pause → do NOT decrement timer
         if state.get("is_paused"):
             await asyncio.sleep(1)
             continue
 
-        if resp.data and resp.data[0].get("force_next"):
+        # teacher pressed NEXT
+        if state.get("force_next"):
 
             logger.info("NEXT BUTTON PRESSED")
 
@@ -260,11 +260,7 @@ async def countdown(battle_id, phase, seconds, seq=None, payload=None):
 
             return "NEXT"
 
-        guard = await engine_pause_guard(battle_id)
-        if guard == "STOPPED":
-            return
-            
-        # ⚠️ DO NOT overwrite payload
+        # update state
         update_state(battle_id, phase, seq, time_left=t)
 
         broadcast_event(
@@ -276,10 +272,12 @@ async def countdown(battle_id, phase, seconds, seq=None, payload=None):
             }
         )
 
-        
-
         logger.info(f"TIMER TICK phase={phase} t={t}")
+
         await asyncio.sleep(1)
+
+        # decrement only after a real second passes
+        t -= 1
 
     return "OK"
 
