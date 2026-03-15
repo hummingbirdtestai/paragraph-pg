@@ -192,6 +192,30 @@ async def wait_if_paused(battle_id):
 
         await asyncio.sleep(1)
 
+# -----------------------------------------------------
+# ENGINE PAUSE GUARD
+# -----------------------------------------------------
+
+async def engine_pause_guard(battle_id):
+
+    while True:
+
+        resp = await safe_execute(
+            supabase.table("live_class_state")
+            .select("is_paused,is_running")
+            .eq("battle_id", battle_id)
+            .limit(1)
+        )
+
+        state = resp.data[0] if resp.data else {}
+
+        if not state.get("is_running"):
+            return "STOPPED"
+
+        if not state.get("is_paused"):
+            return "OK"
+
+        await asyncio.sleep(1)
 
 # -----------------------------------------------------
 # Countdown
@@ -236,6 +260,10 @@ async def countdown(battle_id, phase, seconds, seq=None, payload=None):
 
             return "NEXT"
 
+        guard = await engine_pause_guard(battle_id)
+        if guard == "STOPPED":
+            return
+            
         # ⚠️ DO NOT overwrite payload
         update_state(battle_id, phase, seq, time_left=t)
 
@@ -293,7 +321,10 @@ async def handle_mcq_results(battle_id, seq, mcq):
     # -------------------------------------------------
     # STORE EXACT RPC RESPONSE
     # -------------------------------------------------
-
+    guard = await engine_pause_guard(battle_id)
+    if guard == "STOPPED":
+        return
+    
     update_state(
         battle_id,
         "mcq_result",
@@ -333,6 +364,10 @@ async def handle_mcq_results(battle_id, seq, mcq):
         "image_url": mcq.get("image_url")
     }
 
+    guard = await engine_pause_guard(battle_id)
+    if guard == "STOPPED":
+        return
+    
     update_state(
         battle_id,
         "mcq_explanation",
@@ -589,6 +624,10 @@ async def run_live_class_engine(battle_id):
                     "seq": i,
                     **mcq
                 }
+
+                guard = await engine_pause_guard(battle_id)
+                if guard == "STOPPED":
+                    return
                 
                 update_state(battle_id, "mcq", i, payload=mcq_payload)
                 
@@ -643,6 +682,10 @@ async def run_live_class_engine(battle_id):
 
                 logger.info(f"HYF COUNT = {len(hyfs)}")
 
+                guard = await engine_pause_guard(battle_id)
+                if guard == "STOPPED":
+                    return
+                    
                 update_state(
                     battle_id,
                     "hyf_block",
@@ -683,6 +726,10 @@ async def run_live_class_engine(battle_id):
                     "seq": seq_counter,
                     **mcq
                 }
+                
+                guard = await engine_pause_guard(battle_id)
+                if guard == "STOPPED":
+                    return
                 
                 update_state(battle_id, "mcq", seq_counter, payload=mcq_payload)
                 
@@ -729,7 +776,11 @@ async def run_live_class_engine(battle_id):
                 }
 
                 logger.info(f"IMAGE PAYLOAD = {payload}")
-            
+
+                guard = await engine_pause_guard(battle_id)
+                if guard == "STOPPED":
+                    return
+                
                 update_state(
                     battle_id,
                     "image_discussion",
@@ -751,7 +802,10 @@ async def run_live_class_engine(battle_id):
                 if res == "STOPPED":
                     return
 
-
+        guard = await engine_pause_guard(battle_id)
+        if guard == "STOPPED":
+            return
+        
         update_state(battle_id, "ended")
 
         broadcast_event(battle_id, "battle_end", {})
