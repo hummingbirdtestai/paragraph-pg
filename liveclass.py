@@ -42,6 +42,19 @@ SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
 
 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+# -----------------------------------------------------
+# SAFE SUPABASE EXECUTE (RETRY WRAPPER)
+# -----------------------------------------------------
+
+async def safe_execute(query, retries=3):
+
+    for i in range(retries):
+        try:
+            return query.execute()
+        except Exception as e:
+            if i == retries - 1:
+                raise e
+            await asyncio.sleep(0.5)
 
 ist = pytz.timezone("Asia/Kolkata")
 
@@ -121,7 +134,7 @@ def broadcast_event(battle_id, event, payload):
                 "x-project-ref": SUPABASE_URL.split("//")[1].split(".")[0],
             },
             json=body,
-            timeout=5
+            timeout=10
         )
 
     except Exception as e:
@@ -195,13 +208,22 @@ async def countdown(battle_id, phase, seconds, seq=None, payload=None):
             logger.info(f"SESSION STOPPED {battle_id}")
             return "STOPPED"
 
-        await wait_if_paused(battle_id)
-
-        resp = supabase.table("live_class_state") \
-            .select("force_next") \
-            .eq("battle_id", battle_id) \
-            .limit(1) \
-            .execute()
+        resp = await safe_execute(
+            supabase.table("live_class_state")
+            .select("force_next,is_paused,is_running")
+            .eq("battle_id", battle_id)
+            .limit(1)
+        )
+        
+        state = resp.data[0] if resp.data else {}
+        
+        if not state.get("is_running"):
+            logger.info(f"SESSION STOPPED {battle_id}")
+            return "STOPPED"
+        
+        if state.get("is_paused"):
+            await asyncio.sleep(1)
+            continue
 
         if resp.data and resp.data[0].get("force_next"):
 
@@ -475,11 +497,12 @@ async def stop_all_sessions():
 @app.get("/session/state/{battle_id}")
 async def get_state(battle_id: str):
 
-    resp = supabase.table("live_class_state") \
-        .select("*") \
-        .eq("battle_id", battle_id) \
-        .limit(1) \
-        .execute()
+    resp = await safe_execute(
+        supabase.table("live_class_state")
+        .select("*")
+        .eq("battle_id", battle_id)
+        .limit(1)
+    )
 
     if not resp.data:
         raise HTTPException(status_code=404, detail="No session state")
