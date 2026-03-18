@@ -289,7 +289,7 @@ async def handle_mcq_results(battle_id, seq, mcq):
         logger.info(f"RPC START seq={seq}")
         
         result = supabase.rpc(
-            "finalize_live_class_mcq_and_get_resultsv17",
+            "finalize_live_class_mcq_and_get_resultsv19",
             {
                 "p_battle_id": battle_id,
                 "p_seq": seq
