@@ -9,6 +9,8 @@ import os
 import time
 import hashlib
 import base64
+import requests
+
 from urllib.parse import quote
 
 # ---------------- ENV ----------------
@@ -17,6 +19,7 @@ load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 
 BUNNY_PULL_ZONE = os.getenv("BUNNY_PULL_ZONE")
 BUNNY_TOKEN_KEY = os.getenv("BUNNY_TOKEN_KEY")
@@ -24,6 +27,7 @@ BUNNY_TOKEN_KEY = os.getenv("BUNNY_TOKEN_KEY")
 if not all([
     SUPABASE_URL,
     SUPABASE_SERVICE_ROLE_KEY,
+    SUPABASE_ANON_KEY,
     BUNNY_PULL_ZONE,
     BUNNY_TOKEN_KEY
 ]):
@@ -48,7 +52,33 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ---------------- ROOT ----------------
+
+@app.get("/")
+async def root():
+    return {
+        "status": "ok",
+        "service": "secure-pdf-api"
+    }
+
 # ---------------- HELPERS ----------------
+
+def verify_supabase_jwt(token: str):
+
+    r = requests.get(
+        f"{SUPABASE_URL}/auth/v1/user",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "apikey": SUPABASE_ANON_KEY,
+        },
+        timeout=10,
+    )
+
+    if r.status_code != 200:
+        return None
+
+    return r.json()
+
 
 def generate_bunny_signed_url(
     storage_path: str,
@@ -95,7 +125,13 @@ async def access_book(
         if not authorization:
             raise HTTPException(
                 status_code=401,
-                detail="Missing auth"
+                detail="Missing authorization header"
+            )
+
+        if not authorization.startswith("Bearer "):
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid authorization format"
             )
 
         token = authorization.replace(
@@ -103,15 +139,17 @@ async def access_book(
             ""
         )
 
-        user = supabase.auth.get_user(token)
+        # ---------------- VERIFY USER ----------------
 
-        if not user or not user.user:
+        user = verify_supabase_jwt(token)
+
+        if not user:
             raise HTTPException(
                 status_code=401,
                 detail="Invalid token"
             )
 
-        auth_user_id = user.user.id
+        auth_user_id = user["id"]
 
         # ---------------- BOOK USER ----------------
 
