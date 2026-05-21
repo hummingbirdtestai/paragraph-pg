@@ -104,7 +104,7 @@ def generate_bunny_signed_url(
     )
 
     signed_url = (
-        f"{BUNNY_PULL_ZONE}/{quote(storage_path)}"
+        f"{BUNNY_PULL_ZONE}/{storage_path}"
         f"?token={token}&expires={expires}"
     )
 
