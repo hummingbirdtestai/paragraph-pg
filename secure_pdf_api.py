@@ -89,22 +89,16 @@ def generate_bunny_signed_url(
 
     path = f"/{storage_path}"
 
-    signature_string = (
-        f"{BUNNY_TOKEN_KEY}{path}{expires}"
-    )
+    security_key = BUNNY_TOKEN_KEY
 
-    signature = hashlib.sha256(
-        signature_string.encode("utf-8")
-    ).digest()
+    hashable = f"{security_key}{path}{expires}"
 
-    token = (
-        base64.urlsafe_b64encode(signature)
-        .decode("utf-8")
-        .rstrip("=")
-    )
+    token = hashlib.md5(
+        hashable.encode("utf-8")
+    ).hexdigest()
 
     signed_url = (
-        f"{BUNNY_PULL_ZONE}/{storage_path}"
+        f"{BUNNY_PULL_ZONE}{path}"
         f"?token={token}&expires={expires}"
     )
 
