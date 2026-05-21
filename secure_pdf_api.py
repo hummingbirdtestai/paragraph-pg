@@ -87,15 +87,20 @@ def generate_bunny_signed_url(
 
     expires = int(time.time()) + expires_in
 
+    # MUST begin with slash
     path = f"/{storage_path}"
 
-    security_key = BUNNY_TOKEN_KEY
+    # EXACT Bunny hash format
+    signature = hashlib.sha256(
+        f"{BUNNY_TOKEN_KEY}{path}{expires}".encode("utf-8")
+    ).digest()
 
-    hashable = f"{security_key}{path}{expires}"
-
-    token = hashlib.md5(
-        hashable.encode("utf-8")
-    ).hexdigest()
+    token = (
+        base64.urlsafe_b64encode(signature)
+        .decode("utf-8")
+        .replace("\n", "")
+        .replace("=", "")
+    )
 
     signed_url = (
         f"{BUNNY_PULL_ZONE}{path}"
