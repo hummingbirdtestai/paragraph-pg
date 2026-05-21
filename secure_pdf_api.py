@@ -93,10 +93,13 @@ def generate_bunny_signed_url(
         f"{BUNNY_TOKEN_KEY}{path}{expires}".encode("utf-8")
     ).digest()
 
+    token = base64.b64encode(signature)
+
     token = (
-        base64.urlsafe_b64encode(signature)
-        .decode("utf-8")
+        token.decode("utf-8")
         .replace("\n", "")
+        .replace("+", "-")
+        .replace("/", "_")
         .replace("=", "")
     )
 
